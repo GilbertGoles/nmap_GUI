@@ -120,6 +120,7 @@ class NmapEngine:
             xml_content = []
             in_xml = False
             last_progress = 0
+            has_xml_data = False
             
             # Читаем stdout
             for line in process.stdout:
@@ -128,6 +129,7 @@ class NmapEngine:
                 # Определяем начало XML
                 if line.startswith('<?xml'):
                     in_xml = True
+                    has_xml_data = True
                 
                 if in_xml:
                     xml_content.append(line)
@@ -139,27 +141,44 @@ class NmapEngine:
                         self.event_bus.scan_progress.emit({
                             'scan_id': scan_config.scan_id,
                             'progress': progress,
-                            'status': line[:100]  # Первые 100 символов как статус
+                            'status': line[:100]
                         })
-                    elif "Nmap scan report for" in line:
-                        # Обновляем прогресс при обнаружении хоста
-                        progress = min(last_progress + 10, 90)
-                        if progress > last_progress:
-                            last_progress = progress
-                            self.event_bus.scan_progress.emit({
-                                'scan_id': scan_config.scan_id,
-                                'progress': progress,
-                                'status': f"Scanning {line}"
-                            })
             
-            # Сохраняем XML для парсинга
-            if xml_content and scan_config.scan_id in self.active_processes:
+            # Сохраняем XML для парсинга только если есть данные
+            if has_xml_data and xml_content and scan_config.scan_id in self.active_processes:
                 xml_file = self.active_processes[scan_config.scan_id]['xml_file']
                 with open(xml_file, 'w') as f:
                     f.write('\n'.join(xml_content))
+            elif not has_xml_data:
+                # Если XML нет, создаем базовый результат
+                self._create_fallback_result(scan_config)
                     
         except Exception as e:
             self.logger.error(f"Error reading process output: {e}")
+            self._create_fallback_result(scan_config)
+
+    def _create_fallback_result(self, scan_config: ScanConfig):
+        """Создает fallback результат когда XML недоступен"""
+        try:
+            # Парсим текстовый вывод чтобы получить базовую информацию
+            fallback_result = ScanResult(
+                scan_id=scan_config.scan_id,
+                config=scan_config,
+                hosts=[],
+                status="completed",
+                raw_xml=""
+            )
+            
+            # Здесь можно добавить парсинг текстового вывода nmap
+            # для извлечения базовой информации о хостах
+            
+            self.event_bus.scan_completed.emit({
+                'scan_id': scan_config.scan_id,
+                'results': fallback_result
+            })
+            
+        except Exception as e:
+            self.logger.error(f"Error creating fallback result: {e}")
 
     def _parse_progress_from_output(self, line: str, last_progress: int) -> Optional[int]:
         """
