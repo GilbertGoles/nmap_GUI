@@ -1,16 +1,15 @@
 from PyQt6.QtWidgets import QWidget
-from abc import ABC
 from core.event_bus import EventBus
 
-class BaseTabModule(QWidget, ABC):
+class BaseTabModule(QWidget):
     """Базовый класс для модулей-вкладок"""
     
-    TAB_NAME = "Unnamed Tab"
-    
     def __init__(self, event_bus: EventBus, dependencies: dict = None):
-        QWidget.__init__(self)
+        super().__init__()
         self.event_bus = event_bus
         self.dependencies = dependencies or {}
+        
+        # Вызываем методы инициализации
         self._setup_event_handlers()
         self._create_ui()
     
