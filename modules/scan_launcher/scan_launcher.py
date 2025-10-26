@@ -12,10 +12,17 @@ def create_tab(event_bus: EventBus, dependencies: dict = None):
 
 class ScanLauncherTab(BaseTabModule):
     
+    def __init__(self, event_bus: EventBus, dependencies: dict = None):
+        super().__init__(event_bus, dependencies)
+        self.current_scan_id = None
+        
     def _setup_event_handlers(self):
         """Настройка обработчиков событий"""
         self.event_bus.scan_progress.connect(self._on_scan_progress)
         self.event_bus.scan_completed.connect(self._on_scan_completed)
+        self.event_bus.scan_paused.connect(self._on_scan_paused)
+        self.event_bus.scan_resumed.connect(self._on_scan_resumed)
+        self.event_bus.scan_stopped.connect(self._on_scan_stopped)
     
     def _create_ui(self):
         """Создает UI компонент запуска сканирований"""
@@ -25,6 +32,11 @@ class ScanLauncherTab(BaseTabModule):
         title = QLabel("NMAP Scan Launcher")
         title.setStyleSheet("font-size: 16pt; font-weight: bold; margin: 10px;")
         layout.addWidget(title)
+        
+        # Статус сканирования
+        self.status_label = QLabel("Ready")
+        self.status_label.setStyleSheet("font-weight: bold; color: green;")
+        layout.addWidget(self.status_label)
         
         # Группа настроек сканирования
         settings_group = QGroupBox("Scan Settings")
@@ -37,7 +49,7 @@ class ScanLauncherTab(BaseTabModule):
         
         # Тип сканирования
         self.scan_type_combo = QComboBox()
-        self.scan_type_combo.addItems(["Quick Scan", "Stealth Scan", "Comprehensive Scan"])
+        self.scan_type_combo.addItems(["Quick Scan", "Stealth Scan", "Comprehensive Scan", "Custom"])
         settings_layout.addRow("Scan Type:", self.scan_type_combo)
         
         # Диапазон портов
@@ -66,6 +78,10 @@ class ScanLauncherTab(BaseTabModule):
         self.start_btn = QPushButton("Start Scan")
         self.start_btn.clicked.connect(self._start_scan)
         
+        self.pause_btn = QPushButton("Pause")
+        self.pause_btn.clicked.connect(self._pause_scan)
+        self.pause_btn.setEnabled(False)
+        
         self.stop_btn = QPushButton("Stop Scan")
         self.stop_btn.clicked.connect(self._stop_scan)
         self.stop_btn.setEnabled(False)
@@ -74,6 +90,7 @@ class ScanLauncherTab(BaseTabModule):
         self.progress_bar.setVisible(False)
         
         control_layout.addWidget(self.start_btn)
+        control_layout.addWidget(self.pause_btn)
         control_layout.addWidget(self.stop_btn)
         control_layout.addWidget(self.progress_bar)
         control_layout.addStretch()
@@ -98,6 +115,8 @@ class ScanLauncherTab(BaseTabModule):
         self.targets_input.textChanged.connect(self._update_command_preview)
         self.scan_type_combo.currentTextChanged.connect(self._update_command_preview)
         self.ports_input.textChanged.connect(self._update_command_preview)
+        self.service_version_check.stateChanged.connect(self._update_command_preview)
+        self.os_detection_check.stateChanged.connect(self._update_command_preview)
     
     def _update_command_preview(self):
         """Обновляет предпросмотр команды nmap"""
@@ -119,6 +138,15 @@ class ScanLauncherTab(BaseTabModule):
             cmd_parts.append("-sS")
         elif scan_type == "Comprehensive Scan":
             cmd_parts.extend(["-sS", "-sV", "-O", "-A"])
+        # Для Custom типа добавляем опции на основе чекбоксов
+        elif scan_type == "Custom":
+            if self.service_version_check.isChecked():
+                cmd_parts.append("-sV")
+            if self.os_detection_check.isChecked():
+                cmd_parts.append("-O")
+        
+        # Добавляем потоки
+        cmd_parts.append(f"--min-parallelism {self.threads_spinbox.value()}")
         
         # Добавляем порты
         if ports:
@@ -153,31 +181,99 @@ class ScanLauncherTab(BaseTabModule):
             # Запускаем сканирование
             scan_manager = self.dependencies.get('scan_manager')
             if scan_manager:
-                scan_id = scan_manager.submit_scan(config)
-                self.start_btn.setEnabled(False)
-                self.stop_btn.setEnabled(True)
+                self.current_scan_id = scan_manager.submit_scan(config)
+                self._set_scan_running_state(True)
                 self.progress_bar.setVisible(True)
                 self.progress_bar.setValue(0)
-                self.command_preview.setPlainText(f"Scan started: {scan_id}")
+                self.status_label.setText("Scan running...")
+                self.status_label.setStyleSheet("font-weight: bold; color: blue;")
+                self.command_preview.setPlainText(f"Scan started: {self.current_scan_id}")
                 
         except Exception as e:
             self.command_preview.setPlainText(f"Error starting scan: {e}")
     
+    def _pause_scan(self):
+        """Приостанавливает сканирование"""
+        if self.current_scan_id:
+            self.event_bus.scan_paused.emit({'scan_id': self.current_scan_id})
+            self.status_label.setText("Scan paused")
+            self.status_label.setStyleSheet("font-weight: bold; color: orange;")
+            self.pause_btn.setText("Resume")
+            self.pause_btn.clicked.disconnect()
+            self.pause_btn.clicked.connect(self._resume_scan)
+    
+    def _resume_scan(self):
+        """Возобновляет сканирование"""
+        if self.current_scan_id:
+            self.event_bus.scan_resumed.emit({'scan_id': self.current_scan_id})
+            self.status_label.setText("Scan resumed")
+            self.status_label.setStyleSheet("font-weight: bold; color: blue;")
+            self.pause_btn.setText("Pause")
+            self.pause_btn.clicked.disconnect()
+            self.pause_btn.clicked.connect(self._pause_scan)
+    
     def _stop_scan(self):
         """Останавливает сканирование"""
+        if self.current_scan_id:
+            self.event_bus.scan_stopped.emit({'scan_id': self.current_scan_id})
+            self._reset_scan_controls()
+            self.status_label.setText("Scan stopped")
+            self.status_label.setStyleSheet("font-weight: bold; color: red;")
+    
+    def _reset_scan_controls(self):
+        """Сбрасывает элементы управления сканированием"""
         self.start_btn.setEnabled(True)
+        self.pause_btn.setEnabled(False)
         self.stop_btn.setEnabled(False)
         self.progress_bar.setVisible(False)
-        self.command_preview.setPlainText("Scan stopped")
+        self.progress_bar.setValue(0)
+        self.current_scan_id = None
+        
+        # Восстанавливаем кнопку паузы
+        self.pause_btn.setText("Pause")
+        self.pause_btn.clicked.disconnect()
+        self.pause_btn.clicked.connect(self._pause_scan)
+    
+    def _set_scan_running_state(self, running: bool):
+        """Устанавливает состояние элементов управления при запуске/остановке сканирования"""
+        self.start_btn.setEnabled(not running)
+        self.pause_btn.setEnabled(running)
+        self.stop_btn.setEnabled(running)
     
     @pyqtSlot(dict)
     def _on_scan_progress(self, data):
         """Обрабатывает обновление прогресса сканирования"""
-        progress = data.get('progress', 0)
-        self.progress_bar.setValue(progress)
+        if data.get('scan_id') == self.current_scan_id:
+            progress = data.get('progress', 0)
+            self.progress_bar.setValue(progress)
     
     @pyqtSlot(dict)
     def _on_scan_completed(self, data):
         """Обрабатывает завершение сканирования"""
-        self._stop_scan()
-        self.command_preview.setPlainText("Scan completed successfully!")
+        if data.get('scan_id') == self.current_scan_id:
+            self._reset_scan_controls()
+            self.status_label.setText("Scan completed")
+            self.status_label.setStyleSheet("font-weight: bold; color: green;")
+            self.command_preview.setPlainText("Scan completed successfully!")
+    
+    @pyqtSlot(dict)
+    def _on_scan_paused(self, data):
+        """Обрабатывает событие паузы сканирования"""
+        if data.get('scan_id') == self.current_scan_id:
+            self.status_label.setText("Scan paused")
+            self.status_label.setStyleSheet("font-weight: bold; color: orange;")
+    
+    @pyqtSlot(dict)
+    def _on_scan_resumed(self, data):
+        """Обрабатывает событие возобновления сканирования"""
+        if data.get('scan_id') == self.current_scan_id:
+            self.status_label.setText("Scan resumed")
+            self.status_label.setStyleSheet("font-weight: bold; color: blue;")
+    
+    @pyqtSlot(dict)
+    def _on_scan_stopped(self, data):
+        """Обрабатывает событие остановки сканирования"""
+        if data.get('scan_id') == self.current_scan_id:
+            self._reset_scan_controls()
+            self.status_label.setText("Scan stopped")
+            self.status_label.setStyleSheet("font-weight: bold; color: red;")
