@@ -28,23 +28,18 @@ class NmapEngine:
         self.event_bus = event_bus
         self.logger = self._setup_logging()
         self.active_processes = {}
-        self.output_handlers = {}
         
     def _setup_logging(self):
         """Настройка логирования"""
         logging.basicConfig(level=logging.INFO)
         return logging.getLogger(__name__)
     
-    def execute_scan(self, scan_config: ScanConfig, 
-                    progress_callback: Optional[Callable] = None,
-                    output_callback: Optional[Callable] = None) -> ScanResult:
+    def execute_scan(self, scan_config: ScanConfig) -> ScanResult:
         """
         Выполняет nmap сканирование
         
         Args:
             scan_config: Конфигурация сканирования
-            progress_callback: Callback для прогресса
-            output_callback: Callback для вывода
             
         Returns:
             ScanResult: Результаты сканирования
@@ -67,7 +62,8 @@ class NmapEngine:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                preexec_fn=os.setsid if os.name != 'nt' else None
+                bufsize=1,
+                universal_newlines=True
             )
             
             # Сохраняем процесс
@@ -78,21 +74,13 @@ class NmapEngine:
                 'xml_file': xml_file_path
             }
             
-            # Запускаем потоки для чтения вывода
-            stdout_thread = threading.Thread(
-                target=self._read_stdout,
-                args=(process, scan_config, output_callback)
-            )
-            stderr_thread = threading.Thread(
-                target=self._read_stderr,
+            # Запускаем поток для чтения вывода в реальном времени
+            output_thread = threading.Thread(
+                target=self._read_process_output,
                 args=(process, scan_config)
             )
-            
-            stdout_thread.daemon = True
-            stderr_thread.daemon = True
-            
-            stdout_thread.start()
-            stderr_thread.start()
+            output_thread.daemon = True
+            output_thread.start()
             
             # Ждем завершения процесса
             return_code = process.wait()
@@ -101,7 +89,8 @@ class NmapEngine:
             scan_result = self._parse_xml_results(xml_file_path, scan_config)
             
             # Очищаем
-            del self.active_processes[scan_config.scan_id]
+            if scan_config.scan_id in self.active_processes:
+                del self.active_processes[scan_config.scan_id]
             
             try:
                 os.unlink(xml_file_path)
@@ -116,57 +105,72 @@ class NmapEngine:
             
         except Exception as e:
             self.logger.error(f"Error executing nmap scan: {e}")
-            raise
+            # Возвращаем пустой результат в случае ошибки
+            return ScanResult(
+                scan_id=scan_config.scan_id,
+                config=scan_config,
+                hosts=[],
+                status="error",
+                raw_xml=""
+            )
     
-    def execute_scan_async(self, scan_config: ScanConfig,
-                          progress_callback: Optional[Callable] = None,
-                          output_callback: Optional[Callable] = None) -> threading.Thread:
-        """
-        Выполняет nmap сканирование асинхронно
-        
-        Returns:
-            threading.Thread: Поток выполнения
-        """
-        thread = threading.Thread(
-            target=self._async_scan_wrapper,
-            args=(scan_config, progress_callback, output_callback)
-        )
-        thread.daemon = True
-        thread.start()
-        return thread
-    
-    def _async_scan_wrapper(self, scan_config: ScanConfig,
-                           progress_callback: Optional[Callable],
-                           output_callback: Optional[Callable]):
-        """Обертка для асинхронного выполнения"""
+    def _read_process_output(self, process: subprocess.Popen, scan_config: ScanConfig):
+        """Читает вывод процесса nmap в реальном времени"""
         try:
-            result = self.execute_scan(scan_config, progress_callback, output_callback)
+            xml_content = []
+            in_xml = False
             
-            # Публикуем событие завершения
-            if self.event_bus:
-                self.event_bus.scan_completed.emit({
-                    'scan_id': scan_config.scan_id,
-                    'results': result
-                })
+            # Читаем stdout
+            for line in process.stdout:
+                line = line.strip()
                 
+                # Определяем начало XML
+                if line.startswith('<?xml'):
+                    in_xml = True
+                
+                if in_xml:
+                    xml_content.append(line)
+                else:
+                    # Парсим прогресс из текстового вывода
+                    progress = self._parse_progress_from_output(line)
+                    if progress is not None:
+                        self.event_bus.scan_progress.emit({
+                            'scan_id': scan_config.scan_id,
+                            'progress': progress,
+                            'status': line[:100]  # Первые 100 символов как статус
+                        })
+            
+            # Сохраняем XML для парсинга
+            if xml_content and scan_config.scan_id in self.active_processes:
+                xml_file = self.active_processes[scan_config.scan_id]['xml_file']
+                with open(xml_file, 'w') as f:
+                    f.write('\n'.join(xml_content))
+                    
         except Exception as e:
-            self.logger.error(f"Async scan error: {e}")
-            if self.event_bus:
-                self.event_bus.scan_progress.emit({
-                    'scan_id': scan_config.scan_id,
-                    'progress': 0,
-                    'status': f'error: {e}'
-                })
+            self.logger.error(f"Error reading process output: {e}")
+    
+    def _parse_progress_from_output(self, line: str) -> Optional[int]:
+        """
+        Парсит прогресс из вывода nmap
+        Возвращает процент прогресса или None если не удалось распарсить
+        """
+        try:
+            # Пример строки: "Nmap scan report for scanme.nmap.org (45.33.32.156)"
+            if "Nmap scan report for" in line:
+                return 25
+            elif "PORT" in line and "STATE" in line and "SERVICE" in line:
+                return 50
+            elif "Nmap done:" in line:
+                return 100
+            elif "discovered" in line and "open port" in line:
+                return 75
+        except:
+            pass
+        return None
     
     def _build_nmap_command(self, scan_config: ScanConfig) -> str:
         """
         Строит команду nmap из конфигурации
-        
-        Args:
-            scan_config: Конфигурация сканирования
-            
-        Returns:
-            str: Команда nmap
         """
         cmd_parts = ["nmap"]
         
@@ -174,16 +178,13 @@ class NmapEngine:
         if scan_config.timing_template:
             cmd_parts.append(f"-{scan_config.timing_template}")
         
-        if scan_config.threads and scan_config.threads > 1:
-            cmd_parts.append(f"--min-parallelism {scan_config.threads}")
-        
         # Опции сканирования на основе типа
         if scan_config.scan_type.value == "quick":
             cmd_parts.append("-F")  # Быстрое сканирование
         elif scan_config.scan_type.value == "stealth":
             cmd_parts.append("-sS")  # SYN сканирование
         elif scan_config.scan_type.value == "comprehensive":
-            cmd_parts.extend(["-sS", "-sV", "-O", "-A", "--script=default"])
+            cmd_parts.extend(["-sS", "-sV", "-O", "-A"])
         
         # Дополнительные опции
         if scan_config.service_version:
@@ -203,9 +204,9 @@ class NmapEngine:
         if (scan_config.scan_type.value == "custom" and 
             scan_config.custom_command and 
             scan_config.custom_command.strip()):
-            # Используем пользовательскую команду, но добавляем вывод в XML
             custom_cmd = scan_config.custom_command.strip()
             if "-oX" not in custom_cmd:
+                # Добавляем вывод в XML если его нет
                 custom_cmd += " -oX -"
             return custom_cmd
         
@@ -216,132 +217,13 @@ class NmapEngine:
         cmd_parts.append("-oX -")
         
         # Добавляем вывод прогресса
-        cmd_parts.append("--stats-every 1s")
+        cmd_parts.append("-v")  # Verbose для прогресса
         
         return " ".join(cmd_parts)
-    
-    def _read_stdout(self, process: subprocess.Popen, scan_config: ScanConfig, 
-                    output_callback: Optional[Callable]):
-        """Читает stdout процесса nmap"""
-        try:
-            xml_content = []
-            in_xml = False
-            
-            for line in process.stdout:
-                line = line.strip()
-                
-                if output_callback:
-                    output_callback(line)
-                
-                # Определяем начало XML
-                if line.startswith('<?xml'):
-                    in_xml = True
-                
-                if in_xml:
-                    xml_content.append(line)
-                
-                # Парсим прогресс из вывода
-                progress_info = self._parse_progress_line(line)
-                if progress_info and self.event_bus:
-                    self.event_bus.scan_progress.emit({
-                        'scan_id': scan_config.scan_id,
-                        'progress': progress_info.get('percent', 0),
-                        'status': progress_info.get('status', ''),
-                        'remaining': progress_info.get('remaining', ''),
-                        'raw_line': line
-                    })
-            
-            # Сохраняем XML для парсинга
-            if xml_content and scan_config.scan_id in self.active_processes:
-                xml_file = self.active_processes[scan_config.scan_id]['xml_file']
-                with open(xml_file, 'w') as f:
-                    f.write('\n'.join(xml_content))
-                    
-        except Exception as e:
-            self.logger.error(f"Error reading stdout: {e}")
-    
-    def _read_stderr(self, process: subprocess.Popen, scan_config: ScanConfig):
-        """Читает stderr процесса nmap"""
-        try:
-            for line in process.stderr:
-                line = line.strip()
-                if line:
-                    self.logger.warning(f"Nmap stderr [{scan_config.scan_id}]: {line}")
-                    
-                    # Публикуем ошибки через event bus
-                    if self.event_bus:
-                        self.event_bus.scan_progress.emit({
-                            'scan_id': scan_config.scan_id,
-                            'progress': 0,
-                            'status': f'warning: {line}',
-                            'raw_line': line
-                        })
-        except Exception as e:
-            self.logger.error(f"Error reading stderr: {e}")
-    
-    def _parse_progress_line(self, line: str) -> Optional[dict]:
-        """
-        Парсит строку прогресса nmap
-        
-        Args:
-            line: Строка вывода nmap
-            
-        Returns:
-            dict: Информация о прогрессе или None
-        """
-        try:
-            # Пример: "Stats: 0:00:12 elapsed; 0 hosts completed (1 up), 1 undergoing Connect Scan"
-            if line.startswith("Stats:"):
-                parts = line.split(';')
-                if len(parts) >= 2:
-                    time_part = parts[0].replace("Stats:", "").strip()
-                    progress_part = parts[1].strip()
-                    
-                    # Парсим время
-                    time_elapsed = time_part.split()[0]
-                    
-                    # Парсим прогресс хостов
-                    hosts_match = None
-                    if "completed" in progress_part:
-                        import re
-                        hosts_match = re.search(r'(\d+) hosts completed', progress_part)
-                    
-                    percent = 0
-                    if hosts_match:
-                        completed_hosts = int(hosts_match.group(1))
-                        # Это упрощенная логика - в реальности нужно знать общее количество хостов
-                        percent = min(completed_hosts * 10, 100)  # Эвристика
-                    
-                    return {
-                        'percent': percent,
-                        'status': progress_part,
-                        'elapsed': time_elapsed,
-                        'raw': line
-                    }
-            
-            # Другие форматы прогресса nmap
-            elif "scan report for" in line.lower():
-                return {
-                    'percent': 0,
-                    'status': f'Scanning: {line}',
-                    'raw': line
-                }
-                
-        except Exception as e:
-            self.logger.debug(f"Error parsing progress line: {e}")
-        
-        return None
     
     def _parse_xml_results(self, xml_file_path: str, scan_config: ScanConfig) -> ScanResult:
         """
         Парсит XML результаты nmap
-        
-        Args:
-            xml_file_path: Путь к XML файлу
-            scan_config: Конфигурация сканирования
-            
-        Returns:
-            ScanResult: Результаты сканирования
         """
         try:
             from core.result_parser import NmapResultParser
@@ -370,21 +252,12 @@ class NmapEngine:
             process = process_info['process']
             
             try:
-                # Останавливаем процесс и все дочерние процессы
-                if os.name != 'nt':
-                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-                else:
-                    process.terminate()
-                
-                # Ждем завершения
+                # Останавливаем процесс
+                process.terminate()
                 process.wait(timeout=5)
-                
             except (ProcessLookupError, subprocess.TimeoutExpired):
                 try:
-                    if os.name != 'nt':
-                        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-                    else:
-                        process.kill()
+                    process.kill()
                 except:
                     pass
             
@@ -396,81 +269,7 @@ class NmapEngine:
                     except:
                         pass
                 
-                del self.active_processes[scan_id]
+                if scan_id in self.active_processes:
+                    del self.active_processes[scan_id]
                 
             self.logger.info(f"Scan stopped: {scan_id}")
-    
-    def pause_scan(self, scan_id: str):
-        """Приостанавливает сканирование"""
-        if scan_id in self.active_processes:
-            process = self.active_processes[scan_id]['process']
-            try:
-                if os.name != 'nt':
-                    os.killpg(os.getpgid(process.pid), signal.SIGSTOP)
-                else:
-                    # На Windows приостановка сложнее
-                    parent = psutil.Process(process.pid)
-                    for child in parent.children(recursive=True):
-                        child.suspend()
-            except Exception as e:
-                self.logger.error(f"Error pausing scan: {e}")
-    
-    def resume_scan(self, scan_id: str):
-        """Возобновляет сканирование"""
-        if scan_id in self.active_processes:
-            process = self.active_processes[scan_id]['process']
-            try:
-                if os.name != 'nt':
-                    os.killpg(os.getpgid(process.pid), signal.SIGCONT)
-                else:
-                    parent = psutil.Process(process.pid)
-                    for child in parent.children(recursive=True):
-                        child.resume()
-            except Exception as e:
-                self.logger.error(f"Error resuming scan: {e}")
-    
-    def get_scan_status(self, scan_id: str) -> dict:
-        """Возвращает статус сканирования"""
-        if scan_id in self.active_processes:
-            process_info = self.active_processes[scan_id]
-            process = process_info['process']
-            
-            return {
-                'running': process.poll() is None,
-                'return_code': process.returncode,
-                'start_time': process_info['start_time'],
-                'config': process_info['config']
-            }
-        else:
-            return {'running': False, 'return_code': None}
-    
-    def validate_nmap_installation(self) -> bool:
-        """Проверяет наличие nmap в системе"""
-        try:
-            result = subprocess.run(
-                ["nmap", "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            return result.returncode == 0
-        except (subprocess.SubprocessError, FileNotFoundError):
-            return False
-    
-    def get_nmap_version(self) -> str:
-        """Возвращает версию nmap"""
-        try:
-            result = subprocess.run(
-                ["nmap", "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.returncode == 0:
-                lines = result.stdout.split('\n')
-                for line in lines:
-                    if line.startswith('Nmap version'):
-                        return line.strip()
-            return "Unknown"
-        except:
-            return "Not installed"
