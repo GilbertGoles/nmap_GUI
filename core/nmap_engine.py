@@ -113,12 +113,13 @@ class NmapEngine:
                 status="error",
                 raw_xml=""
             )
-    
+
     def _read_process_output(self, process: subprocess.Popen, scan_config: ScanConfig):
         """Читает вывод процесса nmap в реальном времени"""
         try:
             xml_content = []
             in_xml = False
+            last_progress = 0
             
             # Читаем stdout
             for line in process.stdout:
@@ -132,13 +133,24 @@ class NmapEngine:
                     xml_content.append(line)
                 else:
                     # Парсим прогресс из текстового вывода
-                    progress = self._parse_progress_from_output(line)
-                    if progress is not None:
+                    progress = self._parse_progress_from_output(line, last_progress)
+                    if progress is not None and progress > last_progress:
+                        last_progress = progress
                         self.event_bus.scan_progress.emit({
                             'scan_id': scan_config.scan_id,
                             'progress': progress,
                             'status': line[:100]  # Первые 100 символов как статус
                         })
+                    elif "Nmap scan report for" in line:
+                        # Обновляем прогресс при обнаружении хоста
+                        progress = min(last_progress + 10, 90)
+                        if progress > last_progress:
+                            last_progress = progress
+                            self.event_bus.scan_progress.emit({
+                                'scan_id': scan_config.scan_id,
+                                'progress': progress,
+                                'status': f"Scanning {line}"
+                            })
             
             # Сохраняем XML для парсинга
             if xml_content and scan_config.scan_id in self.active_processes:
@@ -148,22 +160,25 @@ class NmapEngine:
                     
         except Exception as e:
             self.logger.error(f"Error reading process output: {e}")
-    
-    def _parse_progress_from_output(self, line: str) -> Optional[int]:
+
+    def _parse_progress_from_output(self, line: str, last_progress: int) -> Optional[int]:
         """
         Парсит прогресс из вывода nmap
-        Возвращает процент прогресса или None если не удалось распарсить
         """
         try:
             # Пример строки: "Nmap scan report for scanme.nmap.org (45.33.32.156)"
             if "Nmap scan report for" in line:
-                return 25
+                return min(last_progress + 20, 80)
             elif "PORT" in line and "STATE" in line and "SERVICE" in line:
-                return 50
+                return min(last_progress + 10, 90)
             elif "Nmap done:" in line:
                 return 100
             elif "discovered" in line and "open port" in line:
-                return 75
+                return min(last_progress + 5, 95)
+            elif "scan initiated" in line:
+                return 10
+            elif "Host is up" in line:
+                return 30
         except:
             pass
         return None
