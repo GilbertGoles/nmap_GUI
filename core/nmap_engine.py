@@ -203,6 +203,9 @@ class NmapEngine:
         return None
 
     def _build_nmap_command(self, scan_config: ScanConfig) -> str:
+        """
+        Строит команду nmap из конфигурации
+        """
         cmd_parts = ["nmap"]
         
         # Для сканирования сети добавляем traceroute и discovery
@@ -250,11 +253,10 @@ class NmapEngine:
         # Цели
         cmd_parts.extend(scan_config.targets)
         
-        # Вывод в XML в stdout
+        # Вывод в XML в stdout - ОБЯЗАТЕЛЬНО!
         cmd_parts.append("-oX -")
         
-        # Добавляем вывод прогресса
-        cmd_parts.append("-v")  # Verbose для прогресса
+        # НЕ добавляем -v, так как он может конфликтовать с XML выводом
         
         return " ".join(cmd_parts)
     
@@ -263,11 +265,33 @@ class NmapEngine:
         Парсит XML результаты nmap
         """
         try:
-            from core.result_parser import NmapResultParser
-            parser = NmapResultParser.get_instance()
+            # Проверяем существует ли файл и не пустой ли он
+            if not os.path.exists(xml_file_path) or os.path.getsize(xml_file_path) == 0:
+                self.logger.warning("XML file is empty or does not exist")
+                return ScanResult(
+                    scan_id=scan_config.scan_id,
+                    config=scan_config,
+                    hosts=[],
+                    status="error",
+                    raw_xml=""
+                )
             
             with open(xml_file_path, 'r') as f:
                 xml_content = f.read()
+            
+            # Проверяем что XML не пустой
+            if not xml_content.strip():
+                self.logger.warning("XML content is empty")
+                return ScanResult(
+                    scan_id=scan_config.scan_id,
+                    config=scan_config,
+                    hosts=[],
+                    status="error", 
+                    raw_xml=""
+                )
+            
+            from core.result_parser import NmapResultParser
+            parser = NmapResultParser.get_instance()
             
             return parser.parse_xml(xml_content, scan_config)
             
