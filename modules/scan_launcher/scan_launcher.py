@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QVBoxLayout, QHBoxLayout, QGroupBox, 
                              QLabel, QComboBox, QLineEdit, QSpinBox, 
                              QCheckBox, QPushButton, QTextEdit, QProgressBar,
-                             QFormLayout)
+                             QFormLayout, QTabWidget)
 from PyQt6.QtCore import pyqtSlot
 from modules.base_module import BaseTabModule
 from shared.models.scan_config import ScanConfig, ScanType
@@ -33,47 +33,23 @@ class ScanLauncherTab(BaseTabModule):
         title.setStyleSheet("font-size: 16pt; font-weight: bold; margin: 10px;")
         layout.addWidget(title)
         
+        # Создаем вкладки для разных типов сканирования
+        self.tab_widget = QTabWidget()
+        
+        # Вкладка быстрого сканирования
+        quick_tab = self._create_quick_tab()
+        self.tab_widget.addTab(quick_tab, "Quick Scan")
+        
+        # Вкладка расширенного сканирования
+        advanced_tab = self._create_advanced_tab()
+        self.tab_widget.addTab(advanced_tab, "Advanced")
+        
+        layout.addWidget(self.tab_widget)
+        
         # Статус сканирования
         self.status_label = QLabel("Ready")
         self.status_label.setStyleSheet("font-weight: bold; color: green;")
         layout.addWidget(self.status_label)
-        
-        # Группа настроек сканирования
-        settings_group = QGroupBox("Scan Settings")
-        settings_layout = QFormLayout(settings_group)
-        
-        # Цели сканирования
-        self.targets_input = QLineEdit()
-        self.targets_input.setPlaceholderText("192.168.1.1, 10.0.0.0/24, scanme.nmap.org")
-        settings_layout.addRow("Targets:", self.targets_input)
-        
-        # Тип сканирования
-        self.scan_type_combo = QComboBox()
-        self.scan_type_combo.addItems(["Quick Scan", "Stealth Scan", "Comprehensive Scan", "Custom"])
-        settings_layout.addRow("Scan Type:", self.scan_type_combo)
-        
-        # Диапазон портов
-        self.ports_input = QLineEdit("1-1000")
-        settings_layout.addRow("Ports:", self.ports_input)
-        
-        # Потоки
-        self.threads_spinbox = QSpinBox()
-        self.threads_spinbox.setRange(1, 16)
-        self.threads_spinbox.setValue(4)
-        settings_layout.addRow("Threads:", self.threads_spinbox)
-        
-        # Опции
-        self.service_version_check = QCheckBox("Service version detection")
-        settings_layout.addRow(self.service_version_check)
-        
-        self.os_detection_check = QCheckBox("OS detection")
-        settings_layout.addRow(self.os_detection_check)
-        
-        # Добавляем чекбокс для script scanning
-        self.script_scan_check = QCheckBox("Script scanning (NSE)")
-        settings_layout.addRow(self.script_scan_check)
-        
-        layout.addWidget(settings_group)
         
         # Панель управления
         control_group = QGroupBox("Scan Control")
@@ -114,20 +90,122 @@ class ScanLauncherTab(BaseTabModule):
         
         # Обновляем предпросмотр команды
         self._update_command_preview()
+
+    def _create_quick_tab(self):
+        """Создает вкладку быстрого сканирования"""
+        widget = QWidget()
+        layout = QFormLayout(widget)
         
-        # Подключаем сигналы для обновления предпросмотра
+        # Цели сканирования с примерами
+        self.targets_input = QLineEdit()
+        self.targets_input.setPlaceholderText(
+            "Examples:\n"
+            "• scanme.nmap.org (single host)\n"
+            "• 192.168.1.1 (single IP)\n" 
+            "• 192.168.1.0/24 (entire network)\n"
+            "• 192.168.1.1-100 (IP range)\n"
+            "• 192.168.1.1,192.168.1.5,192.168.1.10 (multiple IPs)"
+        )
         self.targets_input.textChanged.connect(self._update_command_preview)
+        layout.addRow("Targets:", self.targets_input)
+        
+        # Быстрый выбор сетей
+        network_layout = QHBoxLayout()
+        self.common_networks_combo = QComboBox()
+        self.common_networks_combo.addItems([
+            "Common Networks...",
+            "192.168.1.0/24",
+            "192.168.0.0/24", 
+            "10.0.0.0/24",
+            "172.16.0.0/24"
+        ])
+        self.add_network_btn = QPushButton("Add Network")
+        self.add_network_btn.clicked.connect(self._add_common_network)
+        
+        network_layout.addWidget(self.common_networks_combo)
+        network_layout.addWidget(self.add_network_btn)
+        layout.addRow("Quick Networks:", network_layout)
+        
+        # Тип сканирования
+        self.scan_type_combo = QComboBox()
+        self.scan_type_combo.addItems(["Quick Scan", "Stealth Scan", "Comprehensive Scan", "Network Discovery"])
         self.scan_type_combo.currentTextChanged.connect(self._update_command_preview)
+        layout.addRow("Scan Type:", self.scan_type_combo)
+        
+        # Диапазон портов
+        self.ports_input = QLineEdit("1-1000")
         self.ports_input.textChanged.connect(self._update_command_preview)
+        layout.addRow("Ports:", self.ports_input)
+        
+        return widget
+
+    def _create_advanced_tab(self):
+        """Создает вкладку расширенного сканирования"""
+        widget = QWidget()
+        layout = QFormLayout(widget)
+        
+        # Цели сканирования
+        self.advanced_targets_input = QLineEdit()
+        self.advanced_targets_input.setPlaceholderText("192.168.1.1, 10.0.0.0/24, scanme.nmap.org")
+        self.advanced_targets_input.textChanged.connect(self._update_command_preview)
+        layout.addRow("Targets:", self.advanced_targets_input)
+        
+        # Тип сканирования
+        self.advanced_scan_type_combo = QComboBox()
+        self.advanced_scan_type_combo.addItems(["Quick Scan", "Stealth Scan", "Comprehensive Scan", "Custom"])
+        self.advanced_scan_type_combo.currentTextChanged.connect(self._update_command_preview)
+        layout.addRow("Scan Type:", self.advanced_scan_type_combo)
+        
+        # Диапазон портов
+        self.advanced_ports_input = QLineEdit("1-1000")
+        self.advanced_ports_input.textChanged.connect(self._update_command_preview)
+        layout.addRow("Ports:", self.advanced_ports_input)
+        
+        # Потоки
+        self.threads_spinbox = QSpinBox()
+        self.threads_spinbox.setRange(1, 16)
+        self.threads_spinbox.setValue(4)
+        layout.addRow("Threads:", self.threads_spinbox)
+        
+        # Опции
+        self.service_version_check = QCheckBox("Service version detection")
         self.service_version_check.stateChanged.connect(self._update_command_preview)
+        layout.addRow(self.service_version_check)
+        
+        self.os_detection_check = QCheckBox("OS detection")
         self.os_detection_check.stateChanged.connect(self._update_command_preview)
+        layout.addRow(self.os_detection_check)
+        
+        self.script_scan_check = QCheckBox("Script scanning (NSE)")
         self.script_scan_check.stateChanged.connect(self._update_command_preview)
-    
+        layout.addRow(self.script_scan_check)
+        
+        return widget
+
+    def _add_common_network(self):
+        """Добавляет common network в цели"""
+        network = self.common_networks_combo.currentText()
+        if network != "Common Networks...":
+            current_targets = self.targets_input.text().strip()
+            if current_targets:
+                new_targets = current_targets + "," + network
+            else:
+                new_targets = network
+            self.targets_input.setText(new_targets)
+
     def _update_command_preview(self):
         """Обновляет предпросмотр команды nmap"""
-        targets = self.targets_input.text().strip()
-        scan_type = self.scan_type_combo.currentText()
-        ports = self.ports_input.text().strip()
+        # Определяем активную вкладку и используем соответствующие элементы
+        current_tab_index = self.tab_widget.currentIndex()
+        
+        if current_tab_index == 0:  # Quick Scan tab
+            targets = self.targets_input.text().strip()
+            scan_type = self.scan_type_combo.currentText()
+            ports = self.ports_input.text().strip()
+        else:  # Advanced tab
+            targets = self.advanced_targets_input.text().strip()
+            scan_type = self.advanced_scan_type_combo.currentText()
+            ports = self.advanced_ports_input.text().strip()
         
         if not targets:
             self.command_preview.setPlainText("Enter targets to see command preview")
@@ -142,21 +220,24 @@ class ScanLauncherTab(BaseTabModule):
         elif scan_type == "Stealth Scan":
             cmd_parts.append("-sS")
         elif scan_type == "Comprehensive Scan":
-            cmd_parts.extend(["-sS", "-sV", "-O", "-A", "--script=default"])
-        # Для Custom типа добавляем опции на основе чекбоксов
+            cmd_parts.extend(["-sS", "-sV", "-O", "-A"])
+        elif scan_type == "Network Discovery":
+            cmd_parts.extend(["-sn"])  # Только обнаружение хостов, без сканирования портов
         elif scan_type == "Custom":
-            if self.service_version_check.isChecked():
-                cmd_parts.append("-sV")
-            if self.os_detection_check.isChecked():
-                cmd_parts.append("-O")
-            if self.script_scan_check.isChecked():
-                cmd_parts.append("--script=default")
+            if current_tab_index == 1:  # Only in advanced tab
+                if self.service_version_check.isChecked():
+                    cmd_parts.append("-sV")
+                if self.os_detection_check.isChecked():
+                    cmd_parts.append("-O")
+                if self.script_scan_check.isChecked():
+                    cmd_parts.append("-sC")
         
-        # Добавляем потоки
-        cmd_parts.append(f"--min-parallelism {self.threads_spinbox.value()}")
+        # Добавляем потоки (только в advanced tab)
+        if current_tab_index == 1:
+            cmd_parts.append(f"--min-parallelism {self.threads_spinbox.value()}")
         
-        # Добавляем порты
-        if ports:
+        # Добавляем порты (если не discovery scan)
+        if ports and scan_type != "Network Discovery":
             cmd_parts.append(f"-p {ports}")
         
         # Добавляем цели
@@ -167,7 +248,18 @@ class ScanLauncherTab(BaseTabModule):
 
     def _start_scan(self):
         """Запускает сканирование"""
-        targets_text = self.targets_input.text().strip()
+        # Определяем активную вкладку
+        current_tab_index = self.tab_widget.currentIndex()
+        
+        if current_tab_index == 0:  # Quick Scan tab
+            targets_text = self.targets_input.text().strip()
+            scan_type = self.scan_type_combo.currentText()
+            ports = self.ports_input.text().strip()
+        else:  # Advanced tab
+            targets_text = self.advanced_targets_input.text().strip()
+            scan_type = self.advanced_scan_type_combo.currentText()
+            ports = self.advanced_ports_input.text().strip()
+        
         if not targets_text:
             self.status_label.setText("Error: No targets specified")
             return
@@ -188,17 +280,29 @@ class ScanLauncherTab(BaseTabModule):
                 else:
                     targets.append(target)
             
+            # Определяем тип сканирования для ScanConfig
+            if scan_type == "Quick Scan":
+                scan_type_enum = ScanType.QUICK
+            elif scan_type == "Stealth Scan":
+                scan_type_enum = ScanType.STEALTH
+            elif scan_type == "Comprehensive Scan":
+                scan_type_enum = ScanType.COMPREHENSIVE
+            elif scan_type == "Network Discovery":
+                scan_type_enum = ScanType.DISCOVERY
+            else:
+                scan_type_enum = ScanType.CUSTOM
+            
             # Создаем конфигурацию сканирования
             import uuid
             config = ScanConfig(
                 scan_id=str(uuid.uuid4()),
                 targets=targets,
-                scan_type=ScanType.CUSTOM,
-                port_range=self.ports_input.text(),
-                threads=self.threads_spinbox.value(),
-                service_version=self.service_version_check.isChecked(),
-                os_detection=self.os_detection_check.isChecked(),
-                script_scan=self.script_scan_check.isChecked()
+                scan_type=scan_type_enum,
+                port_range=ports,
+                threads=self.threads_spinbox.value() if current_tab_index == 1 else 4,
+                service_version=self.service_version_check.isChecked() if current_tab_index == 1 else False,
+                os_detection=self.os_detection_check.isChecked() if current_tab_index == 1 else False,
+                script_scan=self.script_scan_check.isChecked() if current_tab_index == 1 else False
             )
             
             # Запускаем сканирование
