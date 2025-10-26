@@ -167,6 +167,13 @@ class ScanLauncherTab(BaseTabModule):
         self.threads_spinbox.setValue(4)
         layout.addRow("Threads:", self.threads_spinbox)
         
+        # Тайминг шаблон
+        self.timing_combo = QComboBox()
+        self.timing_combo.addItems(["T0 (Paranoid)", "T1 (Sneaky)", "T2 (Polite)", "T3 (Normal)", "T4 (Aggressive)", "T5 (Insane)"])
+        self.timing_combo.setCurrentIndex(3)  # T3 Normal по умолчанию
+        self.timing_combo.currentTextChanged.connect(self._update_command_preview)
+        layout.addRow("Timing Template:", self.timing_combo)
+        
         # Опции
         self.service_version_check = QCheckBox("Service version detection")
         self.service_version_check.stateChanged.connect(self._update_command_preview)
@@ -214,6 +221,20 @@ class ScanLauncherTab(BaseTabModule):
         # Строим базовую команду
         cmd_parts = ["nmap"]
         
+        # Добавляем тайминг шаблон (только в advanced tab)
+        if current_tab_index == 1:
+            timing_map = {
+                "T0 (Paranoid)": "T0",
+                "T1 (Sneaky)": "T1", 
+                "T2 (Polite)": "T2",
+                "T3 (Normal)": "T3",
+                "T4 (Aggressive)": "T4",
+                "T5 (Insane)": "T5"
+            }
+            timing_text = self.timing_combo.currentText()
+            if timing_text in timing_map:
+                cmd_parts.append(f"-{timing_map[timing_text]}")
+        
         # Добавляем тип сканирования
         if scan_type == "Quick Scan":
             cmd_parts.append("-F")
@@ -242,6 +263,11 @@ class ScanLauncherTab(BaseTabModule):
         
         # Добавляем цели
         cmd_parts.append(targets)
+        
+        # ВАЖНО: добавляем вывод в XML (обязательно для работы парсера)
+        cmd_parts.append("-oX -")
+        
+        # НЕ добавляем -v, так как он может конфликтовать с XML выводом
         
         command = " ".join(cmd_parts)
         self.command_preview.setPlainText(command)
@@ -292,6 +318,21 @@ class ScanLauncherTab(BaseTabModule):
             else:
                 scan_type_enum = ScanType.CUSTOM
             
+            # Определяем тайминг шаблон
+            timing_template = None
+            if current_tab_index == 1:
+                timing_map = {
+                    "T0 (Paranoid)": "0",
+                    "T1 (Sneaky)": "1", 
+                    "T2 (Polite)": "2",
+                    "T3 (Normal)": "3",
+                    "T4 (Aggressive)": "4",
+                    "T5 (Insane)": "5"
+                }
+                timing_text = self.timing_combo.currentText()
+                if timing_text in timing_map:
+                    timing_template = timing_map[timing_text]
+            
             # Создаем конфигурацию сканирования
             import uuid
             config = ScanConfig(
@@ -300,6 +341,7 @@ class ScanLauncherTab(BaseTabModule):
                 scan_type=scan_type_enum,
                 port_range=ports,
                 threads=self.threads_spinbox.value() if current_tab_index == 1 else 4,
+                timing_template=timing_template,
                 service_version=self.service_version_check.isChecked() if current_tab_index == 1 else False,
                 os_detection=self.os_detection_check.isChecked() if current_tab_index == 1 else False,
                 script_scan=self.script_scan_check.isChecked() if current_tab_index == 1 else False
