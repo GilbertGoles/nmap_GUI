@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import (QVBoxLayout, QHBoxLayout, QGroupBox, 
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, 
                              QLabel, QComboBox, QLineEdit, QSpinBox, 
                              QCheckBox, QPushButton, QTextEdit, QProgressBar,
                              QFormLayout, QTabWidget)
