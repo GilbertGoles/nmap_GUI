@@ -69,6 +69,10 @@ class ScanLauncherTab(BaseTabModule):
         self.os_detection_check = QCheckBox("OS detection")
         settings_layout.addRow(self.os_detection_check)
         
+        # Добавляем чекбокс для script scanning
+        self.script_scan_check = QCheckBox("Script scanning (NSE)")
+        settings_layout.addRow(self.script_scan_check)
+        
         layout.addWidget(settings_group)
         
         # Панель управления
@@ -117,6 +121,7 @@ class ScanLauncherTab(BaseTabModule):
         self.ports_input.textChanged.connect(self._update_command_preview)
         self.service_version_check.stateChanged.connect(self._update_command_preview)
         self.os_detection_check.stateChanged.connect(self._update_command_preview)
+        self.script_scan_check.stateChanged.connect(self._update_command_preview)
     
     def _update_command_preview(self):
         """Обновляет предпросмотр команды nmap"""
@@ -137,13 +142,15 @@ class ScanLauncherTab(BaseTabModule):
         elif scan_type == "Stealth Scan":
             cmd_parts.append("-sS")
         elif scan_type == "Comprehensive Scan":
-            cmd_parts.extend(["-sS", "-sV", "-O", "-A"])
+            cmd_parts.extend(["-sS", "-sV", "-O", "-A", "--script=default"])
         # Для Custom типа добавляем опции на основе чекбоксов
         elif scan_type == "Custom":
             if self.service_version_check.isChecked():
                 cmd_parts.append("-sV")
             if self.os_detection_check.isChecked():
                 cmd_parts.append("-O")
+            if self.script_scan_check.isChecked():
+                cmd_parts.append("--script=default")
         
         # Добавляем потоки
         cmd_parts.append(f"--min-parallelism {self.threads_spinbox.value()}")
@@ -157,12 +164,12 @@ class ScanLauncherTab(BaseTabModule):
         
         command = " ".join(cmd_parts)
         self.command_preview.setPlainText(command)
-    
+
     def _start_scan(self):
         """Запускает сканирование"""
         targets_text = self.targets_input.text().strip()
         if not targets_text:
-            self.command_preview.setPlainText("Error: No targets specified")
+            self.status_label.setText("Error: No targets specified")
             return
         
         try:
@@ -175,22 +182,23 @@ class ScanLauncherTab(BaseTabModule):
                 port_range=self.ports_input.text(),
                 threads=self.threads_spinbox.value(),
                 service_version=self.service_version_check.isChecked(),
-                os_detection=self.os_detection_check.isChecked()
+                os_detection=self.os_detection_check.isChecked(),
+                script_scan=self.script_scan_check.isChecked()
             )
             
             # Запускаем сканирование
             scan_manager = self.dependencies.get('scan_manager')
             if scan_manager:
                 self.current_scan_id = scan_manager.submit_scan(config)
-                self._set_scan_running_state(True)
+                self.start_btn.setEnabled(False)
+                self.pause_btn.setEnabled(True)
+                self.stop_btn.setEnabled(True)
                 self.progress_bar.setVisible(True)
                 self.progress_bar.setValue(0)
-                self.status_label.setText("Scan running...")
-                self.status_label.setStyleSheet("font-weight: bold; color: blue;")
-                self.command_preview.setPlainText(f"Scan started: {self.current_scan_id}")
+                self.status_label.setText(f"Scan started: {self.current_scan_id[:8]}")
                 
         except Exception as e:
-            self.command_preview.setPlainText(f"Error starting scan: {e}")
+            self.status_label.setText(f"Error starting scan: {e}")
     
     def _pause_scan(self):
         """Приостанавливает сканирование"""
@@ -239,22 +247,35 @@ class ScanLauncherTab(BaseTabModule):
         self.start_btn.setEnabled(not running)
         self.pause_btn.setEnabled(running)
         self.stop_btn.setEnabled(running)
-    
+
     @pyqtSlot(dict)
     def _on_scan_progress(self, data):
         """Обрабатывает обновление прогресса сканирования"""
-        if data.get('scan_id') == self.current_scan_id:
-            progress = data.get('progress', 0)
+        scan_id = data.get('scan_id')
+        progress = data.get('progress', 0)
+        status = data.get('status', '')
+        
+        if scan_id == self.current_scan_id:
             self.progress_bar.setValue(progress)
-    
+            if status:
+                self.status_label.setText(f"Scanning... {progress}% - {status[:50]}")
+            else:
+                self.status_label.setText(f"Scanning... {progress}%")
+
     @pyqtSlot(dict)
     def _on_scan_completed(self, data):
         """Обрабатывает завершение сканирования"""
-        if data.get('scan_id') == self.current_scan_id:
+        scan_id = data.get('scan_id')
+        results = data.get('results')
+        
+        if scan_id == self.current_scan_id:
             self._reset_scan_controls()
-            self.status_label.setText("Scan completed")
-            self.status_label.setStyleSheet("font-weight: bold; color: green;")
-            self.command_preview.setPlainText("Scan completed successfully!")
+            if results and hasattr(results, 'hosts'):
+                host_count = len(results.hosts)
+                port_count = sum(len([p for p in h.ports if p.state == 'open']) for h in results.hosts)
+                self.status_label.setText(f"Scan completed! Found {host_count} hosts with {port_count} open ports")
+            else:
+                self.status_label.setText("Scan completed (no results)")
     
     @pyqtSlot(dict)
     def _on_scan_paused(self, data):
