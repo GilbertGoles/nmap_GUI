@@ -97,6 +97,9 @@ class GraphView(QGraphicsView):
         self.show_labels = True
         self.show_connections = True
         
+        # Статусная метка
+        self.status_label = None
+        
     def wheelEvent(self, event):
         """Обработка колесика мыши для масштабирования"""
         if event.angleDelta().y() > 0:
@@ -125,9 +128,16 @@ class GraphView(QGraphicsView):
         """Добавляет узел в граф"""
         self.nodes[node.id] = node
     
-    def add_edge(self, edge: GraphEdge):
+    def add_edge(self, source_id: str, target_id: str, label: str = ""):
         """Добавляет ребро в граф"""
+        edge = GraphEdge(source_id, target_id, label)
         self.edges.append(edge)
+        
+        # Добавляем соединения в узлы
+        if source_id in self.nodes:
+            self.nodes[source_id].add_connection(target_id)
+        if target_id in self.nodes:
+            self.nodes[target_id].add_connection(source_id)
     
     def clear_graph(self):
         """Очищает граф"""
@@ -165,12 +175,14 @@ class GraphView(QGraphicsView):
         # Добавляем узел на сцену
         graphics_item = self.scene.addPath(path, QPen(Qt.GlobalColor.black, 2), QBrush(node.color))
         graphics_item.setData(0, node.id)  # Сохраняем ID для взаимодействия
+        graphics_item.setToolTip(f"{node.type.value}: {node.label}")
         
         # Добавляем текст
         if self.show_labels:
             text_item = self.scene.addText(node.label)
             text_item.setDefaultTextColor(Qt.GlobalColor.white)
             text_item.setFont(QFont("Arial", 8))
+            text_item.setToolTip(f"{node.type.value}: {node.label}")
             
             # Центрируем текст
             text_rect = text_item.boundingRect()
@@ -342,6 +354,10 @@ class VisualizationTab(BaseTabModule):
         splitter.setSizes([700, 300])
         layout.addWidget(splitter)
         
+        # Статусная строка
+        self.status_label = QLabel("No results to visualize")
+        layout.addWidget(self.status_label)
+        
         return widget
     
     def _create_control_panel(self) -> QGroupBox:
@@ -380,6 +396,7 @@ class VisualizationTab(BaseTabModule):
         layout = QVBoxLayout(group)
         
         self.graph_view = GraphView()
+        self.graph_view.status_label = self.status_label  # Ссылка на статусную метку
         layout.addWidget(self.graph_view)
         
         return group
@@ -488,15 +505,24 @@ class VisualizationTab(BaseTabModule):
     
     def _build_graph_from_results(self, scan_result: ScanResult):
         """Строит граф из результатов сканирования"""
-        if not self.graph_view:
+        if not hasattr(self, 'graph_view') or not self.graph_view:
             return
         
         self.graph_view.clear_graph()
+        
+        if not scan_result or not hasattr(scan_result, 'hosts'):
+            self.status_label.setText("No valid results to visualize")
+            return
+        
+        host_count = 0
+        service_count = 0
         
         # Создаем узлы для хостов
         for host in scan_result.hosts:
             if host.state != "up":
                 continue
+            
+            host_count += 1
             
             # Узел хоста
             host_node = GraphNode(
@@ -509,25 +535,31 @@ class VisualizationTab(BaseTabModule):
             
             # Узлы для сервисов
             for port in host.ports:
-                if port.state == "open":
+                if port.state == "open" and port.service and port.service != "unknown":
+                    service_count += 1
+                    
                     # Узел сервиса
+                    service_label = f"{port.service}\n{port.port}"
+                    if port.version:
+                        service_label += f"\n{port.version[:20]}"
+                    
                     service_node = GraphNode(
                         node_id=f"service_{host.ip}_{port.port}",
                         node_type=NodeType.SERVICE,
-                        label=f"{port.service}\n{port.port}",
+                        label=service_label,
                         data=port
                     )
                     self.graph_view.add_node(service_node)
                     
                     # Соединение хост-сервис
-                    self.graph_view.add_edge(GraphEdge(
-                        source_id=host_node.id,
-                        target_id=service_node.id,
-                        label=port.service
-                    ))
+                    self.graph_view.add_edge(host_node.id, service_node.id, port.service)
         
-        # Применяем layout
-        self._apply_layout()
+        # Применяем layout только если есть узлы
+        if host_count > 0:
+            self._apply_layout()
+            self.status_label.setText(f"Visualized {host_count} hosts, {service_count} services")
+        else:
+            self.status_label.setText("No active hosts found to visualize")
     
     def _apply_layout(self):
         """Применяет выбранный layout"""
@@ -567,16 +599,6 @@ class VisualizationTab(BaseTabModule):
         # TODO: Реализовать тепловую карту
         pass
     
-    def _on_node_size_changed(self, value):
-        """Обрабатывает изменение размера узлов"""
-        # TODO: Реализовать изменение размера узлов
-        pass
-    
-    def _on_layers_changed(self):
-        """Обрабатывает изменение видимости слоев"""
-        # TODO: Реализовать управление слоями
-        pass
-
     def _on_node_size_changed(self, value):
         """Обрабатывает изменение размера узлов"""
         if not self.graph_view:
@@ -636,11 +658,7 @@ class VisualizationTab(BaseTabModule):
                         
                         # Соединение хост-сервис
                         if self.hosts_layer_check.isChecked():
-                            self.graph_view.add_edge(GraphEdge(
-                                source_id=host_node.id,
-                                target_id=service_node.id,
-                                label=port.service
-                            ))
+                            self.graph_view.add_edge(host_node.id, service_node.id, port.service)
                     
                     # Отдельный слой портов
                     if self.ports_layer_check.isChecked():
@@ -692,8 +710,4 @@ class VisualizationTab(BaseTabModule):
                 for host in hosts:
                     host_node_id = f"host_{host.ip}"
                     if host_node_id in self.graph_view.nodes:
-                        self.graph_view.add_edge(GraphEdge(
-                            source_id=network_node.id,
-                            target_id=host_node_id,
-                            label=f"{len(hosts)} hosts"
-                        ))
+                        self.graph_view.add_edge(network_node.id, host_node_id, f"{len(hosts)} hosts")
