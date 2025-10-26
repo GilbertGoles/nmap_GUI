@@ -153,18 +153,16 @@ class ResultsTableTab(BaseTabModule):
                 if port.version:
                     details += f"  Version: {port.version}\n"
                 details += f"  State: {port.state}\n"
-                if port.script_results:
-                    details += f"  Scripts: {', '.join(port.script_results)}\n"
+                
+                # Добавляем информацию о скриптах если есть
+                if hasattr(host, 'scripts') and host.scripts:
+                    port_scripts = {k: v for k, v in host.scripts.items() if f"port{port.port}" in k}
+                    if port_scripts:
+                        details += f"  Scripts: {', '.join(port_scripts.keys())}\n"
+                
                 details += "-" * 20 + "\n"
         else:
             details += "No open ports found\n"
-        
-        # Добавляем информацию о дополнительных скриптах, если есть
-        if hasattr(host, 'script_results') and host.script_results:
-            details += "\nScript Results:\n"
-            details += "-" * 40 + "\n"
-            for script_name, script_output in host.script_results.items():
-                details += f"{script_name}: {script_output}\n"
         
         self.details_text.setPlainText(details)
     
