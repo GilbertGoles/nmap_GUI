@@ -97,9 +97,6 @@ class GraphView(QGraphicsView):
         self.show_labels = True
         self.show_connections = True
         
-        # Статусная метка
-        self.status_label = None
-        
     def wheelEvent(self, event):
         """Обработка колесика мыши для масштабирования"""
         if event.angleDelta().y() > 0:
@@ -322,7 +319,6 @@ def create_tab(event_bus: EventBus, dependencies: dict = None):
     return VisualizationTab(event_bus, dependencies)
 
 class VisualizationTab(BaseTabModule):
-    TAB_NAME = "Visualization"
     
     def __init__(self, event_bus: EventBus, dependencies: dict = None):
         super().__init__(event_bus, dependencies)
@@ -396,7 +392,6 @@ class VisualizationTab(BaseTabModule):
         layout = QVBoxLayout(group)
         
         self.graph_view = GraphView()
-        self.graph_view.status_label = self.status_label  # Ссылка на статусную метку
         layout.addWidget(self.graph_view)
         
         return group
