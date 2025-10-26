@@ -201,12 +201,15 @@ class NmapEngine:
         except:
             pass
         return None
-    
+
     def _build_nmap_command(self, scan_config: ScanConfig) -> str:
-        """
-        Строит команду nmap из конфигурации
-        """
         cmd_parts = ["nmap"]
+        
+        # Для сканирования сети добавляем traceroute и discovery
+        if any('/' in target for target in scan_config.targets) or \
+           any('-' in target for target in scan_config.targets):
+            cmd_parts.append("--traceroute")  # Трассировка маршрута
+            cmd_parts.append("--reason")      # Причины решений
         
         # Базовые опции производительности
         if scan_config.timing_template:
