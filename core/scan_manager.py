@@ -6,6 +6,7 @@ from typing import Dict, List
 from enum import Enum
 
 from core.event_bus import EventBus
+from core.nmap_engine import NmapEngine
 from shared.models.scan_config import ScanConfig
 from shared.models.scan_result import ScanResult
 
@@ -25,6 +26,7 @@ class ScanJob:
         self.result = None
         self.progress = 0
         self.thread = None
+        self.nmap_engine = None
 
 class ScanManager:
     _instance = None
@@ -41,6 +43,9 @@ class ScanManager:
         self.active_scans: Dict[str, ScanJob] = {}
         self.scan_history: List[ScanJob] = []
         self.is_running = True
+        self.nmap_engine = NmapEngine.get_instance(event_bus)
+        
+        # Запускаем worker thread
         self.worker_thread = threading.Thread(target=self._process_queue, daemon=True)
         self.worker_thread.start()
         
@@ -73,27 +78,46 @@ class ScanManager:
                 continue
     
     def _execute_scan(self, job: ScanJob):
-        """Выполняет сканирование"""
+        """Выполняет сканирование через nmap движок"""
         try:
             job.status = ScanStatus.RUNNING
             
-            # Здесь будет интеграция с nmap_engine
-            # Пока эмулируем прогресс
-            for i in range(10):
+            # Callback для прогресса
+            def progress_callback(data):
                 if job.status == ScanStatus.PAUSED:
                     while job.status == ScanStatus.PAUSED:
                         time.sleep(0.5)
                 
                 if job.status == ScanStatus.STOPPED:
-                    break
-                    
-                job.progress = (i + 1) * 10
+                    # Останавливаем сканирование
+                    self.nmap_engine.stop_scan(job.id)
+                    return
+                
+                job.progress = data.get('progress', job.progress)
                 self.event_bus.scan_progress.emit({
                     'scan_id': job.id,
                     'progress': job.progress,
-                    'status': 'running'
+                    'status': data.get('status', ''),
+                    'remaining': data.get('remaining', ''),
+                    'raw_line': data.get('raw_line', '')
                 })
-                time.sleep(1)
+            
+            # Callback для вывода
+            def output_callback(line):
+                if line and not line.startswith('<?xml'):
+                    self.event_bus.scan_progress.emit({
+                        'scan_id': job.id,
+                        'progress': job.progress,
+                        'status': f'Output: {line[:100]}...' if len(line) > 100 else line,
+                        'raw_line': line
+                    })
+            
+            # Выполняем сканирование
+            job.result = self.nmap_engine.execute_scan(
+                job.config,
+                progress_callback=progress_callback,
+                output_callback=output_callback
+            )
             
             if job.status == ScanStatus.RUNNING:
                 job.status = ScanStatus.COMPLETED
@@ -104,6 +128,9 @@ class ScanManager:
                     'results': job.result
                 })
                 
+                # Добавляем в историю
+                self.scan_history.append(job)
+                
         except Exception as e:
             job.status = ScanStatus.ERROR
             self.event_bus.scan_progress.emit({
@@ -113,24 +140,50 @@ class ScanManager:
             })
     
     def _on_scan_paused(self, data):
+        """Обрабатывает паузу сканирования"""
         scan_id = data.get('scan_id')
         if scan_id in self.active_scans:
-            self.active_scans[scan_id].status = ScanStatus.PAUSED
+            job = self.active_scans[scan_id]
+            job.status = ScanStatus.PAUSED
+            self.nmap_engine.pause_scan(scan_id)
     
     def _on_scan_resumed(self, data):
+        """Обрабатывает возобновление сканирования"""
         scan_id = data.get('scan_id')
         if scan_id in self.active_scans:
-            self.active_scans[scan_id].status = ScanStatus.RUNNING
+            job = self.active_scans[scan_id]
+            job.status = ScanStatus.RUNNING
+            self.nmap_engine.resume_scan(scan_id)
     
     def _on_scan_stopped(self, data):
+        """Обрабатывает остановку сканирования"""
         scan_id = data.get('scan_id')
         if scan_id in self.active_scans:
-            self.active_scans[scan_id].status = ScanStatus.STOPPED
+            job = self.active_scans[scan_id]
+            job.status = ScanStatus.STOPPED
+            self.nmap_engine.stop_scan(scan_id)
     
     def get_scan_status(self, scan_id: str) -> ScanStatus:
         """Возвращает статус сканирования"""
-        return self.active_scans.get(scan_id, ScanStatus.ERROR)
+        return self.active_scans.get(scan_id, ScanStatus.ERROR).status
     
     def get_queue_size(self) -> int:
         """Возвращает размер очереди"""
         return self.scan_queue.qsize()
+    
+    def get_active_scans_count(self) -> int:
+        """Возвращает количество активных сканирований"""
+        return len([job for job in self.active_scans.values() 
+                   if job.status in [ScanStatus.RUNNING, ScanStatus.PAUSED]])
+    
+    def get_scan_history(self, limit: int = 10) -> List[ScanJob]:
+        """Возвращает историю сканирований"""
+        return self.scan_history[-limit:] if self.scan_history else []
+    
+    def validate_nmap(self) -> bool:
+        """Проверяет доступность nmap"""
+        return self.nmap_engine.validate_nmap_installation()
+    
+    def get_nmap_version(self) -> str:
+        """Возвращает версию nmap"""
+        return self.nmap_engine.get_nmap_version()
