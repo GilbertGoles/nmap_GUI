@@ -14,28 +14,18 @@ class BaseModule(ABC):
     def _setup_event_handlers(self):
         """Настройка обработчиков событий"""
         pass
-    
-    @abstractmethod
-    def get_ui(self) -> QWidget:
-        """Возвращает UI компонент модуля"""
-        pass
 
-class BaseTabModule(BaseModule):
+class BaseTabModule(BaseModule, QWidget):
     """Базовый класс для модулей-вкладок"""
     
     TAB_NAME = "Unnamed Tab"
     
     def __init__(self, event_bus: EventBus, dependencies: dict = None):
-        super().__init__(event_bus, dependencies)
-        self._widget = None
-    
-    def get_ui(self) -> QWidget:
-        """Возвращает виджет вкладки"""
-        if self._widget is None:
-            self._widget = self._create_ui()
-        return self._widget
+        QWidget.__init__(self)
+        BaseModule.__init__(self, event_bus, dependencies)
+        self._create_ui()
     
     @abstractmethod
-    def _create_ui(self) -> QWidget:
+    def _create_ui(self):
         """Создает UI компонент"""
         pass
