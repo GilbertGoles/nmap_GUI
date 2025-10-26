@@ -64,14 +64,15 @@ class ApplicationLoader:
         except Exception as e:
             self.logger.error(f"Failed to load core modules: {e}")
             raise
-    
+
     def _load_tab_modules(self, tab_widget):
         """Загружает модули в виде вкладок"""
         tab_modules = [
             ('scan_launcher', 'Scan Launcher'),
             ('target_manager', 'Target Manager'), 
-            ('monitoring', 'Monitoring'),
-            ('results_table', 'Results')
+            ('results_table', 'Results'),
+            ('visualization', 'Visualization'),  # Добавляем визуализацию
+            ('monitoring', 'Monitoring')
         ]
         
         for module_name, tab_name in tab_modules:
