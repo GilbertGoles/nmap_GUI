@@ -44,7 +44,7 @@ class ScanManager:
         self.is_running = True
         self.nmap_engine = NmapEngine.get_instance(event_bus)
         
-        # Подписываемся на события прогресса
+        # Подписываемся на события
         self.event_bus.scan_progress.connect(self._on_scan_progress)
         self.event_bus.scan_paused.connect(self._on_scan_paused)
         self.event_bus.scan_resumed.connect(self._on_scan_resumed)
@@ -89,7 +89,14 @@ class ScanManager:
                 job.status = ScanStatus.COMPLETED
                 job.progress = 100
                 
+                # Публикуем завершение сканирования
                 self.event_bus.scan_completed.emit({
+                    'scan_id': job.id,
+                    'results': job.result
+                })
+                
+                # Также публикуем обновление результатов для других модулей
+                self.event_bus.results_updated.emit({
                     'scan_id': job.id,
                     'results': job.result
                 })
@@ -97,12 +104,27 @@ class ScanManager:
                 # Добавляем в историю
                 self.scan_history.append(job)
                 
+                # Очищаем из активных сканирований после небольшой задержки
+                def cleanup_scan():
+                    time.sleep(2)  # Даем время на обработку результатов
+                    if job.id in self.active_scans:
+                        del self.active_scans[job.id]
+                
+                threading.Thread(target=cleanup_scan, daemon=True).start()
+                
         except Exception as e:
             job.status = ScanStatus.ERROR
             self.event_bus.scan_progress.emit({
                 'scan_id': job.id,
                 'progress': 0,
                 'status': f'error: {e}'
+            })
+            
+            # Публикуем ошибку как обновление результатов
+            self.event_bus.results_updated.emit({
+                'scan_id': job.id,
+                'results': None,
+                'error': str(e)
             })
     
     def _on_scan_progress(self, data):
@@ -132,7 +154,19 @@ class ScanManager:
         if scan_id in self.active_scans:
             job = self.active_scans[scan_id]
             job.status = ScanStatus.STOPPED
+            
+            # Публикуем событие обновления результатов с пустым результатом
+            self.event_bus.results_updated.emit({
+                'scan_id': scan_id,
+                'results': None,
+                'status': 'stopped'
+            })
+            
+            # Останавливаем сканирование в движке
             self.nmap_engine.stop_scan(scan_id)
+            
+            # Удаляем из активных сканирований
+            del self.active_scans[scan_id]
     
     def get_scan_status(self, scan_id: str) -> ScanStatus:
         """Возвращает статус сканирования"""
@@ -143,3 +177,38 @@ class ScanManager:
     def get_queue_size(self) -> int:
         """Возвращает размер очереди"""
         return self.scan_queue.qsize()
+    
+    def get_active_scans(self) -> Dict[str, ScanJob]:
+        """Возвращает активные сканирования"""
+        return self.active_scans.copy()
+    
+    def get_scan_history(self, limit: int = None) -> List[ScanJob]:
+        """Возвращает историю сканирований"""
+        if limit:
+            return self.scan_history[-limit:]
+        return self.scan_history
+    
+    def pause_scan(self, scan_id: str):
+        """Приостанавливает сканирование"""
+        if scan_id in self.active_scans and self.active_scans[scan_id].status == ScanStatus.RUNNING:
+            self.active_scans[scan_id].status = ScanStatus.PAUSED
+            self.nmap_engine.pause_scan(scan_id)
+    
+    def resume_scan(self, scan_id: str):
+        """Возобновляет сканирование"""
+        if scan_id in self.active_scans and self.active_scans[scan_id].status == ScanStatus.PAUSED:
+            self.active_scans[scan_id].status = ScanStatus.RUNNING
+            self.nmap_engine.resume_scan(scan_id)
+    
+    def stop_scan(self, scan_id: str):
+        """Останавливает сканирование"""
+        if scan_id in self.active_scans:
+            self._on_scan_stopped({'scan_id': scan_id})
+    
+    def shutdown(self):
+        """Корректное завершение работы менеджера"""
+        self.is_running = False
+        
+        # Останавливаем все активные сканирования
+        for scan_id in list(self.active_scans.keys()):
+            self.stop_scan(scan_id)
