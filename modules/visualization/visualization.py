@@ -577,7 +577,7 @@ class VisualizationTab(BaseTabModule):
         # TODO: Реализовать управление слоями
         pass
 
-      def _on_node_size_changed(self, value):
+    def _on_node_size_changed(self, value):
         """Обрабатывает изменение размера узлов"""
         if not self.graph_view:
             return
