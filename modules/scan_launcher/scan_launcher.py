@@ -173,11 +173,26 @@ class ScanLauncherTab(BaseTabModule):
             return
         
         try:
+            # Парсим цели (убираем порты из IP адресов)
+            targets = []
+            for target in targets_text.split(','):
+                target = target.strip()
+                # Если указан IP:PORT, убираем порт
+                if ':' in target and not target.startswith(('http', 'https')):
+                    ip_part = target.split(':')[0]
+                    if self._is_valid_ip(ip_part):
+                        targets.append(ip_part)
+                        self.status_label.setText(f"Note: Using {ip_part} instead of {target}")
+                    else:
+                        targets.append(target)
+                else:
+                    targets.append(target)
+            
             # Создаем конфигурацию сканирования
             import uuid
             config = ScanConfig(
                 scan_id=str(uuid.uuid4()),
-                targets=[target.strip() for target in targets_text.split(',')],
+                targets=targets,
                 scan_type=ScanType.CUSTOM,
                 port_range=self.ports_input.text(),
                 threads=self.threads_spinbox.value(),
@@ -199,6 +214,15 @@ class ScanLauncherTab(BaseTabModule):
                 
         except Exception as e:
             self.status_label.setText(f"Error starting scan: {e}")
+    
+    def _is_valid_ip(self, ip_str: str) -> bool:
+        """Проверяет валидность IP адреса"""
+        import ipaddress
+        try:
+            ipaddress.ip_address(ip_str)
+            return True
+        except ValueError:
+            return False
     
     def _pause_scan(self):
         """Приостанавливает сканирование"""
