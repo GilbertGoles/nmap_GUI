@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import (QVBoxLayout, QGroupBox,
 from PyQt6.QtCore import pyqtSlot
 from modules.base_module import BaseTabModule
 from core.event_bus import EventBus
+from shared.models.scan_result import HostInfo  # Добавляем импорт
 
 def create_tab(event_bus: EventBus, dependencies: dict = None):
     return ResultsTableTab(event_bus, dependencies)
@@ -43,6 +44,9 @@ class ResultsTableTab(BaseTabModule):
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
         
+        # Подключаем обработчик выбора строки
+        self.results_table.itemSelectionChanged.connect(self._on_row_selected)
+        
         table_layout.addWidget(self.results_table)
         layout.addWidget(table_group)
         
@@ -52,7 +56,7 @@ class ResultsTableTab(BaseTabModule):
         
         self.details_text = QTextEdit()
         self.details_text.setReadOnly(True)
-        self.details_text.setMaximumHeight(150)
+        self.details_text.setMaximumHeight(200)
         details_layout.addWidget(self.details_text)
         
         layout.addWidget(details_group)
@@ -88,6 +92,7 @@ class ResultsTableTab(BaseTabModule):
         """Отображает результаты в таблице"""
         if not results or not hasattr(results, 'hosts'):
             self.status_label.setText("No results to display")
+            self.results_table.setRowCount(0)
             return
         
         hosts = results.hosts
@@ -98,19 +103,89 @@ class ResultsTableTab(BaseTabModule):
             self.results_table.setItem(row, 0, QTableWidgetItem(host.ip))
             self.results_table.setItem(row, 1, QTableWidgetItem(host.hostname or "N/A"))
             self.results_table.setItem(row, 2, QTableWidgetItem(host.state))
-            self.results_table.setItem(row, 3, QTableWidgetItem(host.os_family or "Unknown"))
+            
+            # OS информация
+            os_info = ""
+            if host.os_family:
+                os_info = host.os_family
+                if host.os_details:
+                    os_info += f" ({host.os_details})"
+            else:
+                os_info = "Unknown"
+            self.results_table.setItem(row, 3, QTableWidgetItem(os_info))
             
             # Количество открытых портов
-            open_ports = sum(1 for port in host.ports if port.state == "open")
-            self.results_table.setItem(row, 4, QTableWidgetItem(str(open_ports)))
+            open_ports = [p for p in host.ports if p.state == "open"]
+            self.results_table.setItem(row, 4, QTableWidgetItem(str(len(open_ports))))
             
             # Список сервисов
             services = []
-            for port in host.ports:
-                if port.state == "open" and port.service != "unknown":
-                    services.append(port.service)
+            for port in open_ports:
+                if port.service and port.service != "unknown":
+                    services.append(f"{port.service}:{port.port}")
             
-            services_text = ", ".join(set(services)) if services else "None"
+            services_text = ", ".join(services) if services else "None"
             self.results_table.setItem(row, 5, QTableWidgetItem(services_text))
         
-        self.status_label.setText(f"Displaying {len(hosts)} hosts")
+        # Обновляем статус с общей статистикой
+        total_open_ports = sum(len([p for p in h.ports if p.state == "open"]) for h in hosts)
+        self.status_label.setText(f"Displaying {len(hosts)} hosts, {total_open_ports} open ports")
+        
+        # Показываем детали первого хоста, если есть результаты
+        if hosts:
+            self.results_table.selectRow(0)  # Автоматически выбираем первую строку
+            self._show_host_details(hosts[0])
+    
+    def _show_host_details(self, host: HostInfo):
+        """Показывает детальную информацию о хосте"""
+        details = f"Host: {host.ip}\n"
+        details += f"Hostname: {host.hostname or 'N/A'}\n"
+        details += f"Status: {host.state}\n"
+        details += f"OS: {host.os_family or 'Unknown'} {host.os_details or ''}\n\n"
+        
+        open_ports = [p for p in host.ports if p.state == "open"]
+        if open_ports:
+            details += "Open Ports:\n"
+            details += "-" * 40 + "\n"
+            for port in open_ports:
+                details += f"Port: {port.port}/{port.protocol}\n"
+                details += f"  Service: {port.service}\n"
+                if port.version:
+                    details += f"  Version: {port.version}\n"
+                details += f"  State: {port.state}\n"
+                if port.script_results:
+                    details += f"  Scripts: {', '.join(port.script_results)}\n"
+                details += "-" * 20 + "\n"
+        else:
+            details += "No open ports found\n"
+        
+        # Добавляем информацию о дополнительных скриптах, если есть
+        if hasattr(host, 'script_results') and host.script_results:
+            details += "\nScript Results:\n"
+            details += "-" * 40 + "\n"
+            for script_name, script_output in host.script_results.items():
+                details += f"{script_name}: {script_output}\n"
+        
+        self.details_text.setPlainText(details)
+    
+    def _on_row_selected(self):
+        """Обрабатывает выбор строки в таблице"""
+        selected_items = self.results_table.selectedItems()
+        if not selected_items or not self.current_results:
+            return
+        
+        row = selected_items[0].row()
+        host_ip = self.results_table.item(row, 0).text()
+        
+        # Находим выбранный хост
+        for host in self.current_results.hosts:
+            if host.ip == host_ip:
+                self._show_host_details(host)
+                break
+    
+    def clear_results(self):
+        """Очищает результаты"""
+        self.results_table.setRowCount(0)
+        self.details_text.clear()
+        self.status_label.setText("No results available")
+        self.current_results = None
