@@ -1,8 +1,8 @@
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, 
+from PyQt6.QtWidgets import (QVBoxLayout, QHBoxLayout, QGroupBox, 
                              QLabel, QComboBox, QLineEdit, QSpinBox, 
                              QCheckBox, QPushButton, QTextEdit, QProgressBar,
-                             QFormLayout, QTabWidget)
-from PyQt6.QtCore import Qt, pyqtSlot
+                             QFormLayout)
+from PyQt6.QtCore import pyqtSlot
 from modules.base_module import BaseTabModule
 from shared.models.scan_config import ScanConfig, ScanType
 from core.event_bus import EventBus
@@ -12,9 +12,6 @@ def create_tab(event_bus: EventBus, dependencies: dict = None):
 
 class ScanLauncherTab(BaseTabModule):
     
-    def __init__(self, event_bus: EventBus, dependencies: dict = None):
-        super().__init__(event_bus, dependencies)
-        
     def _setup_event_handlers(self):
         """Настройка обработчиков событий"""
         self.event_bus.scan_progress.connect(self._on_scan_progress)
@@ -26,7 +23,7 @@ class ScanLauncherTab(BaseTabModule):
         
         # Заголовок
         title = QLabel("NMAP Scan Launcher")
-        title.setStyleSheet("font-size: 16pt; font-weight: bold;")
+        title.setStyleSheet("font-size: 16pt; font-weight: bold; margin: 10px;")
         layout.addWidget(title)
         
         # Группа настроек сканирования
@@ -46,6 +43,12 @@ class ScanLauncherTab(BaseTabModule):
         # Диапазон портов
         self.ports_input = QLineEdit("1-1000")
         settings_layout.addRow("Ports:", self.ports_input)
+        
+        # Потоки
+        self.threads_spinbox = QSpinBox()
+        self.threads_spinbox.setRange(1, 16)
+        self.threads_spinbox.setValue(4)
+        settings_layout.addRow("Threads:", self.threads_spinbox)
         
         # Опции
         self.service_version_check = QCheckBox("Service version detection")
@@ -142,6 +145,7 @@ class ScanLauncherTab(BaseTabModule):
                 targets=[target.strip() for target in targets_text.split(',')],
                 scan_type=ScanType.CUSTOM,
                 port_range=self.ports_input.text(),
+                threads=self.threads_spinbox.value(),
                 service_version=self.service_version_check.isChecked(),
                 os_detection=self.os_detection_check.isChecked()
             )
@@ -154,6 +158,7 @@ class ScanLauncherTab(BaseTabModule):
                 self.stop_btn.setEnabled(True)
                 self.progress_bar.setVisible(True)
                 self.progress_bar.setValue(0)
+                self.command_preview.setPlainText(f"Scan started: {scan_id}")
                 
         except Exception as e:
             self.command_preview.setPlainText(f"Error starting scan: {e}")
@@ -163,6 +168,7 @@ class ScanLauncherTab(BaseTabModule):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.progress_bar.setVisible(False)
+        self.command_preview.setPlainText("Scan stopped")
     
     @pyqtSlot(dict)
     def _on_scan_progress(self, data):
