@@ -232,51 +232,58 @@ class NmapEngine:
         """
         cmd_parts = ["nmap"]
         
-        # Базовые опции производительности - ИСПРАВЛЕНО!
+        # Базовые опции производительности
         if scan_config.timing_template and scan_config.timing_template.startswith('T'):
             cmd_parts.append(f"-{scan_config.timing_template}")
         elif scan_config.timing_template:
-            # Если timing_template не начинается с T, добавляем T
             cmd_parts.append(f"-T{scan_config.timing_template}")
         
-        # Опции сканирования на основе типа
+        # Опции сканирования на основе типа - ИСПРАВЛЕННАЯ ВЕРСИЯ!
         if scan_config.scan_type.value == "quick":
-            cmd_parts.append("-F")  # Быстрое сканирование
+            # Для быстрого сканирования используем -F вместо указания портов
+            cmd_parts.append("-F")
+            # НЕ добавляем -p при использовании -F (они конфликтуют)
         elif scan_config.scan_type.value == "stealth":
-            cmd_parts.append("-sS")  # SYN сканирование
+            cmd_parts.append("-sS")
+            # Добавляем порты для stealth сканирования
+            if scan_config.port_range:
+                cmd_parts.append(f"-p {scan_config.port_range}")
         elif scan_config.scan_type.value == "comprehensive":
             cmd_parts.extend(["-sS", "-sV", "-O", "-A"])
+            # Добавляем порты для comprehensive сканирования
+            if scan_config.port_range:
+                cmd_parts.append(f"-p {scan_config.port_range}")
         elif scan_config.scan_type.value == "discovery":
             cmd_parts.append("-sn")  # Только обнаружение хостов
+            # НЕ добавляем порты для discovery сканирования
+        elif scan_config.scan_type.value == "custom":
+            # Для custom сканирования добавляем порты если указаны
+            if scan_config.port_range:
+                cmd_parts.append(f"-p {scan_config.port_range}")
         
-        # Дополнительные опции
-        if scan_config.service_version:
+        # Дополнительные опции (не для quick сканирования)
+        if scan_config.service_version and scan_config.scan_type.value != "quick":
             cmd_parts.append("-sV")
         
-        if scan_config.os_detection:
+        if scan_config.os_detection and scan_config.scan_type.value != "quick":
             cmd_parts.append("-O")
         
-        if scan_config.script_scan:
+        if scan_config.script_scan and scan_config.scan_type.value != "quick":
             cmd_parts.append("-sC")
         
-        # Диапазон портов (не для discovery сканирования)
-        if scan_config.port_range and scan_config.scan_type.value != "discovery":
-            cmd_parts.append(f"-p {scan_config.port_range}")
-        
-        # Пользовательская команда (имеет приоритет)
+        # Пользовательская команда (имеет приоритет для custom сканирования)
         if (scan_config.scan_type.value == "custom" and 
             scan_config.custom_command and 
             scan_config.custom_command.strip()):
             custom_cmd = scan_config.custom_command.strip()
             if "-oX" not in custom_cmd:
-                # Добавляем вывод в XML если его нет
                 custom_cmd += " -oX -"
             return custom_cmd
         
         # Цели
         cmd_parts.extend(scan_config.targets)
         
-        # Вывод в XML в stdout - ОБЯЗАТЕЛЬНО!
+        # Вывод в XML в stdout
         cmd_parts.append("-oX -")
         
         return " ".join(cmd_parts)
