@@ -3,9 +3,11 @@ from typing import List, Optional
 from enum import Enum
 
 class ScanType(Enum):
+    """Типы сканирования NMAP"""
     QUICK = "quick"
-    STEALTH = "stealth"
+    STEALTH = "stealth" 
     COMPREHENSIVE = "comprehensive"
+    DISCOVERY = "discovery"
     CUSTOM = "custom"
 
 @dataclass
@@ -34,25 +36,39 @@ class ScanConfig:
         if self.threads and self.threads > 1:
             cmd_parts.append(f"--min-parallelism {self.threads}")
         
-        # Тип сканирования
+        # Тип сканирования - ИСПРАВЛЕННАЯ ВЕРСИЯ!
         if self.scan_type == ScanType.QUICK:
             cmd_parts.append("-F")
+            # Для quick сканирования игнорируем указанные порты
         elif self.scan_type == ScanType.STEALTH:
             cmd_parts.append("-sS")
         elif self.scan_type == ScanType.COMPREHENSIVE:
-            cmd_parts.extend([-"-sS", "-sV", "-O", "-A"])
+            cmd_parts.extend(["-sS", "-sV", "-O", "-A"])
+        elif self.scan_type == ScanType.DISCOVERY:
+            cmd_parts.append("-sn")
+            # Для discovery сканирования игнорируем порты
         
-        # Дополнительные опции
-        if self.service_version:
-            cmd_parts.append("-sV")
-        if self.os_detection:
-            cmd_parts.append("-O")
-        if self.script_scan:
-            cmd_parts.append("-sC")
+        # Дополнительные опции (игнорируем для quick и discovery сканирования)
+        if self.scan_type not in [ScanType.QUICK, ScanType.DISCOVERY]:
+            if self.service_version:
+                cmd_parts.append("-sV")
+            if self.os_detection:
+                cmd_parts.append("-O")
+            if self.script_scan:
+                cmd_parts.append("-sC")
         
-        # Порты
-        if self.port_range:
+        # Порты (игнорируем для quick и discovery сканирования)
+        if self.port_range and self.scan_type not in [ScanType.QUICK, ScanType.DISCOVERY]:
             cmd_parts.append(f"-p {self.port_range}")
+        
+        # Пользовательская команда (имеет приоритет для custom сканирования)
+        if (self.scan_type == ScanType.CUSTOM and 
+            self.custom_command and 
+            self.custom_command.strip()):
+            custom_cmd = self.custom_command.strip()
+            if "-oX" not in custom_cmd:
+                custom_cmd += " -oX -"
+            return custom_cmd
         
         # Цели
         cmd_parts.extend(self.targets)
