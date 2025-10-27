@@ -208,15 +208,12 @@ class NmapEngine:
         """
         cmd_parts = ["nmap"]
         
-        # Для сканирования сети добавляем traceroute и discovery
-        if any('/' in target for target in scan_config.targets) or \
-           any('-' in target for target in scan_config.targets):
-            cmd_parts.append("--traceroute")  # Трассировка маршрута
-            cmd_parts.append("--reason")      # Причины решений
-        
-        # Базовые опции производительности
-        if scan_config.timing_template:
+        # Базовые опции производительности - ИСПРАВЛЕНО!
+        if scan_config.timing_template and scan_config.timing_template.startswith('T'):
             cmd_parts.append(f"-{scan_config.timing_template}")
+        elif scan_config.timing_template:
+            # Если timing_template не начинается с T, добавляем T
+            cmd_parts.append(f"-T{scan_config.timing_template}")
         
         # Опции сканирования на основе типа
         if scan_config.scan_type.value == "quick":
@@ -255,8 +252,6 @@ class NmapEngine:
         
         # Вывод в XML в stdout - ОБЯЗАТЕЛЬНО!
         cmd_parts.append("-oX -")
-        
-        # НЕ добавляем -v, так как он может конфликтовать с XML выводом
         
         return " ".join(cmd_parts)
     
