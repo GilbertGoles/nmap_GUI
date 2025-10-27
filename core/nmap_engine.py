@@ -46,11 +46,13 @@ class NmapEngine:
             self.logger.info(f"Nmap command: {command}")
             
             # Создаем временный файл для XML вывода
-            with tempfile.NamedTemporaryFile(mode='w+', suffix='.xml', delete=False) as temp_file:
+            with tempfile.NamedTemporaryFile(mode='w+', suffix='.xml', delete=False, encoding='utf-8') as temp_file:
                 xml_file_path = temp_file.name
             
-            # Запускаем nmap процесс с дополнительной информацией
+            # Запускаем nmap процесс
             self.logger.info(f"Executing: {command}")
+            
+            # ИСПРАВЛЕНИЕ: используем правильный подход для чтения вывода
             process = subprocess.Popen(
                 command,
                 shell=True,
@@ -69,24 +71,20 @@ class NmapEngine:
                 'xml_file': xml_file_path
             }
             
-            # Запускаем потоки для чтения stdout и stderr
-            stdout_thread = threading.Thread(
-                target=self._read_stdout,
+            # Запускаем основной поток для обработки вывода
+            output_thread = threading.Thread(
+                target=self._process_nmap_output,
                 args=(process, scan_config, xml_file_path)
             )
-            stderr_thread = threading.Thread(
-                target=self._read_stderr,
-                args=(process, scan_config)
-            )
-            
-            stdout_thread.daemon = True
-            stderr_thread.daemon = True
-            stdout_thread.start()
-            stderr_thread.start()
+            output_thread.daemon = True
+            output_thread.start()
             
             # Ждем завершения процесса
             return_code = process.wait()
             self.logger.info(f"Nmap process finished with return code: {return_code}")
+            
+            # Даем потоку время завершиться
+            output_thread.join(timeout=5)
             
             # Читаем XML результаты
             scan_result = self._parse_xml_results(xml_file_path, scan_config)
@@ -97,8 +95,8 @@ class NmapEngine:
             
             try:
                 os.unlink(xml_file_path)
-            except:
-                pass
+            except Exception as e:
+                self.logger.debug(f"Error removing temp file: {e}")
             
             self.logger.info(f"Scan completed: {scan_config.scan_id}")
             return scan_result
@@ -113,24 +111,27 @@ class NmapEngine:
                 raw_xml=""
             )
     
-    def _read_stdout(self, process: subprocess.Popen, scan_config: ScanConfig, xml_file_path: str):
-        """Читает stdout процесса nmap"""
+    def _process_nmap_output(self, process: subprocess.Popen, scan_config: ScanConfig, xml_file_path: str):
+        """Обрабатывает вывод nmap (stdout и stderr)"""
         try:
             xml_content = []
             in_xml = False
             last_progress = 0
-            has_xml_data = False
             
+            # Читаем stdout
             for line in process.stdout:
                 line = line.strip()
                 
+                # Определяем начало XML
                 if line.startswith('<?xml'):
                     in_xml = True
-                    has_xml_data = True
                     self.logger.debug("Found XML start")
                 
                 if in_xml:
                     xml_content.append(line)
+                    # Проверяем конец XML
+                    if '</nmaprun>' in line:
+                        break
                 else:
                     # Логируем не-XML вывод для отладки
                     if line:
@@ -143,23 +144,27 @@ class NmapEngine:
                         self.event_bus.scan_progress.emit({
                             'scan_id': scan_config.scan_id,
                             'progress': progress,
-                            'status': line[:100]  # Ограничиваем длину статуса
+                            'status': line[:100]
                         })
             
             # Сохраняем XML
             if xml_content:
-                with open(xml_file_path, 'w') as f:
+                with open(xml_file_path, 'w', encoding='utf-8') as f:
                     f.write('\n'.join(xml_content))
                 self.logger.debug(f"Saved {len(xml_content)} lines of XML")
             else:
                 self.logger.warning("No XML content received from nmap")
-                # Если XML нет, создаем fallback результат
-                if not has_xml_data:
-                    self._create_fallback_result(scan_config)
                     
         except Exception as e:
-            self.logger.error(f"Error reading stdout: {e}")
-            self._create_fallback_result(scan_config)
+            self.logger.error(f"Error processing nmap output: {e}")
+        
+        # Обрабатываем stderr в отдельном потоке
+        stderr_thread = threading.Thread(
+            target=self._read_stderr,
+            args=(process, scan_config)
+        )
+        stderr_thread.daemon = True
+        stderr_thread.start()
     
     def _read_stderr(self, process: subprocess.Popen, scan_config: ScanConfig):
         """Читает stderr процесса nmap"""
@@ -168,44 +173,19 @@ class NmapEngine:
                 line = line.strip()
                 if line:
                     self.logger.warning(f"Nmap stderr: {line}")
-                    # Также отправляем ошибки в UI через event bus
                     self.event_bus.scan_progress.emit({
                         'scan_id': scan_config.scan_id,
-                        'progress': -1,  # Специальное значение для ошибок
+                        'progress': -1,
                         'status': f"Error: {line[:100]}"
                     })
         except Exception as e:
             self.logger.error(f"Error reading stderr: {e}")
-
-    def _create_fallback_result(self, scan_config: ScanConfig):
-        """Создает fallback результат когда XML недоступен"""
-        try:
-            # Парсим текстовый вывод чтобы получить базовую информацию
-            fallback_result = ScanResult(
-                scan_id=scan_config.scan_id,
-                config=scan_config,
-                hosts=[],
-                status="completed",
-                raw_xml=""
-            )
-            
-            # Здесь можно добавить парсинг текстового вывода nmap
-            # для извлечения базовой информации о хостах
-            
-            self.event_bus.scan_completed.emit({
-                'scan_id': scan_config.scan_id,
-                'results': fallback_result
-            })
-            
-        except Exception as e:
-            self.logger.error(f"Error creating fallback result: {e}")
 
     def _parse_progress_from_output(self, line: str, last_progress: int) -> Optional[int]:
         """
         Парсит прогресс из вывода nmap
         """
         try:
-            # Пример строки: "Nmap scan report for scanme.nmap.org (45.33.32.156)"
             if "Nmap scan report for" in line:
                 return min(last_progress + 20, 80)
             elif "PORT" in line and "STATE" in line and "SERVICE" in line:
@@ -233,35 +213,23 @@ class NmapEngine:
         cmd_parts = ["nmap"]
         
         # Базовые опции производительности
-        if scan_config.timing_template and scan_config.timing_template.startswith('T'):
-            cmd_parts.append(f"-{scan_config.timing_template}")
-        elif scan_config.timing_template:
-            cmd_parts.append(f"-T{scan_config.timing_template}")
+        if scan_config.timing_template:
+            if scan_config.timing_template.startswith('T'):
+                cmd_parts.append(f"-{scan_config.timing_template}")
+            else:
+                cmd_parts.append(f"-T{scan_config.timing_template}")
         
-        # Опции сканирования на основе типа - ИСПРАВЛЕННАЯ ВЕРСИЯ!
+        # Опции сканирования на основе типа
         if scan_config.scan_type.value == "quick":
-            # Для быстрого сканирования используем -F вместо указания портов
             cmd_parts.append("-F")
-            # НЕ добавляем -p при использовании -F (они конфликтуют)
         elif scan_config.scan_type.value == "stealth":
             cmd_parts.append("-sS")
-            # Добавляем порты для stealth сканирования
-            if scan_config.port_range:
-                cmd_parts.append(f"-p {scan_config.port_range}")
         elif scan_config.scan_type.value == "comprehensive":
             cmd_parts.extend(["-sS", "-sV", "-O", "-A"])
-            # Добавляем порты для comprehensive сканирования
-            if scan_config.port_range:
-                cmd_parts.append(f"-p {scan_config.port_range}")
         elif scan_config.scan_type.value == "discovery":
-            cmd_parts.append("-sn")  # Только обнаружение хостов
-            # НЕ добавляем порты для discovery сканирования
-        elif scan_config.scan_type.value == "custom":
-            # Для custom сканирования добавляем порты если указаны
-            if scan_config.port_range:
-                cmd_parts.append(f"-p {scan_config.port_range}")
+            cmd_parts.append("-sn")
         
-        # Дополнительные опции (не для quick сканирования)
+        # Дополнительные опции
         if scan_config.service_version and scan_config.scan_type.value != "quick":
             cmd_parts.append("-sV")
         
@@ -271,7 +239,12 @@ class NmapEngine:
         if scan_config.script_scan and scan_config.scan_type.value != "quick":
             cmd_parts.append("-sC")
         
-        # Пользовательская команда (имеет приоритет для custom сканирования)
+        # Диапазон портов
+        if (scan_config.port_range and 
+            scan_config.scan_type.value not in ["discovery", "quick"]):
+            cmd_parts.append(f"-p {scan_config.port_range}")
+        
+        # Пользовательская команда
         if (scan_config.scan_type.value == "custom" and 
             scan_config.custom_command and 
             scan_config.custom_command.strip()):
@@ -283,7 +256,7 @@ class NmapEngine:
         # Цели
         cmd_parts.extend(scan_config.targets)
         
-        # Вывод в XML в stdout
+        # Вывод в XML
         cmd_parts.append("-oX -")
         
         return " ".join(cmd_parts)
@@ -293,9 +266,9 @@ class NmapEngine:
         Парсит XML результаты nmap
         """
         try:
-            # Проверяем существует ли файл и не пустой ли он
-            if not os.path.exists(xml_file_path) or os.path.getsize(xml_file_path) == 0:
-                self.logger.warning("XML file is empty or does not exist")
+            # Проверяем существует ли файл
+            if not os.path.exists(xml_file_path):
+                self.logger.warning("XML file does not exist")
                 return ScanResult(
                     scan_id=scan_config.scan_id,
                     config=scan_config,
@@ -304,10 +277,22 @@ class NmapEngine:
                     raw_xml=""
                 )
             
-            with open(xml_file_path, 'r') as f:
+            file_size = os.path.getsize(xml_file_path)
+            if file_size == 0:
+                self.logger.warning("XML file is empty")
+                return ScanResult(
+                    scan_id=scan_config.scan_id,
+                    config=scan_config,
+                    hosts=[],
+                    status="error",
+                    raw_xml=""
+                )
+            
+            self.logger.info(f"XML file size: {file_size} bytes")
+            
+            with open(xml_file_path, 'r', encoding='utf-8') as f:
                 xml_content = f.read()
             
-            # Проверяем что XML не пустой
             if not xml_content.strip():
                 self.logger.warning("XML content is empty")
                 return ScanResult(
@@ -318,14 +303,26 @@ class NmapEngine:
                     raw_xml=""
                 )
             
+            # Проверяем что XML валидный
+            if not xml_content.startswith('<?xml'):
+                self.logger.warning("XML content doesn't start with <?xml")
+                return ScanResult(
+                    scan_id=scan_config.scan_id,
+                    config=scan_config,
+                    hosts=[],
+                    status="error",
+                    raw_xml=xml_content
+                )
+            
             from core.result_parser import NmapResultParser
             parser = NmapResultParser.get_instance()
             
-            return parser.parse_xml(xml_content, scan_config)
+            result = parser.parse_xml(xml_content, scan_config)
+            self.logger.info(f"Parsed {len(result.hosts)} hosts from XML")
+            return result
             
         except Exception as e:
             self.logger.error(f"Error parsing XML results: {e}")
-            # Возвращаем пустой результат в случае ошибки
             return ScanResult(
                 scan_id=scan_config.scan_id,
                 config=scan_config,
@@ -341,7 +338,6 @@ class NmapEngine:
             process = process_info['process']
             
             try:
-                # Останавливаем процесс
                 process.terminate()
                 process.wait(timeout=5)
             except (ProcessLookupError, subprocess.TimeoutExpired):
@@ -351,7 +347,6 @@ class NmapEngine:
                     pass
             
             finally:
-                # Очищаем временный файл
                 if 'xml_file' in process_info:
                     try:
                         os.unlink(process_info['xml_file'])
