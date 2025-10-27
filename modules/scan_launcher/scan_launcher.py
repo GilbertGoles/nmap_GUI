@@ -246,11 +246,24 @@ class ScanLauncherTab(QWidget):
             if results and results.status == "completed":
                 self.log_output.append(f"✅ Scan {scan_id} completed successfully!")
                 self.log_output.append(f"📊 Found {len(results.hosts)} host(s)")
+                
+                # ИСПРАВЛЕНИЕ: используем правильные атрибуты HostInfo (ip вместо ip_address)
                 for host in results.hosts:
                     open_ports = len([port for port in host.ports if port.state == 'open'])
-                    self.log_output.append(f"   • {host.address} ({host.hostname}): {open_ports} open ports")
+                    hostname = host.hostname if host.hostname else "N/A"
+                    self.log_output.append(f"   • {host.ip} ({hostname}): {open_ports} open ports")
+                    
+                    # Дополнительная информация об открытых портах
+                    if open_ports > 0:
+                        open_port_list = [f"{port.port}/{port.protocol}" for port in host.ports if port.state == 'open']
+                        self.log_output.append(f"     Open ports: {', '.join(open_port_list)}")
+                    
+                    # Информация о состоянии хоста
+                    self.log_output.append(f"     Host state: {host.state}")
             else:
                 self.log_output.append(f"❌ Scan {scan_id} failed or was stopped")
+                if results:
+                    self.log_output.append(f"     Status: {results.status}")
             
             self.log_output.append("")  # Пустая строка для разделения
             self._reset_ui()
