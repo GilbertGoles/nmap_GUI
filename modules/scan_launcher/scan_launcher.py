@@ -239,17 +239,28 @@ class ScanLauncherTab(BaseTabModule):
             elif "T5" in timing_text:
                 cmd_parts.append("-T5")
         
-        # Добавляем тип сканирования
+        # Добавляем тип сканирования - ИСПРАВЛЕННАЯ ВЕРСИЯ!
         if scan_type == "Quick Scan":
             cmd_parts.append("-F")
+            # НЕ добавляем -p при использовании -F (они конфликтуют)
         elif scan_type == "Stealth Scan":
             cmd_parts.append("-sS")
+            # Добавляем порты для stealth сканирования
+            if ports and scan_type != "Network Discovery":
+                cmd_parts.append(f"-p {ports}")
         elif scan_type == "Comprehensive Scan":
             cmd_parts.extend(["-sS", "-sV", "-O", "-A"])
+            # Добавляем порты для comprehensive сканирования
+            if ports and scan_type != "Network Discovery":
+                cmd_parts.append(f"-p {ports}")
         elif scan_type == "Network Discovery":
             cmd_parts.extend(["-sn"])  # Только обнаружение хостов, без сканирования портов
+            # НЕ добавляем порты для discovery сканирования
         elif scan_type == "Custom":
             if current_tab_index == 1:  # Only in advanced tab
+                # Для custom сканирования добавляем порты если указаны
+                if ports and scan_type != "Network Discovery":
+                    cmd_parts.append(f"-p {ports}")
                 if self.service_version_check.isChecked():
                     cmd_parts.append("-sV")
                 if self.os_detection_check.isChecked():
@@ -257,13 +268,18 @@ class ScanLauncherTab(BaseTabModule):
                 if self.script_scan_check.isChecked():
                     cmd_parts.append("-sC")
         
+        # Дополнительные опции (только для не-quick сканирований в advanced tab)
+        if current_tab_index == 1 and scan_type != "Quick Scan" and scan_type != "Custom":
+            if self.service_version_check.isChecked():
+                cmd_parts.append("-sV")
+            if self.os_detection_check.isChecked():
+                cmd_parts.append("-O")
+            if self.script_scan_check.isChecked():
+                cmd_parts.append("-sC")
+        
         # Добавляем потоки (только в advanced tab)
         if current_tab_index == 1:
             cmd_parts.append(f"--min-parallelism {self.threads_spinbox.value()}")
-        
-        # Добавляем порты (если не discovery scan)
-        if ports and scan_type != "Network Discovery":
-            cmd_parts.append(f"-p {ports}")
         
         # Добавляем цели
         cmd_parts.append(targets)
@@ -281,11 +297,11 @@ class ScanLauncherTab(BaseTabModule):
         
         if current_tab_index == 0:  # Quick Scan tab
             targets_text = self.targets_input.text().strip()
-            scan_type = self.scan_type_combo.currentText()
+            scan_type_text = self.scan_type_combo.currentText()
             ports = self.ports_input.text().strip()
         else:  # Advanced tab
             targets_text = self.advanced_targets_input.text().strip()
-            scan_type = self.advanced_scan_type_combo.currentText()
+            scan_type_text = self.advanced_scan_type_combo.currentText()
             ports = self.advanced_ports_input.text().strip()
         
         if not targets_text:
@@ -309,13 +325,13 @@ class ScanLauncherTab(BaseTabModule):
                     targets.append(target)
             
             # Определяем тип сканирования для ScanConfig
-            if scan_type == "Quick Scan":
+            if scan_type_text == "Quick Scan":
                 scan_type_enum = ScanType.QUICK
-            elif scan_type == "Stealth Scan":
+            elif scan_type_text == "Stealth Scan":
                 scan_type_enum = ScanType.STEALTH
-            elif scan_type == "Comprehensive Scan":
+            elif scan_type_text == "Comprehensive Scan":
                 scan_type_enum = ScanType.COMPREHENSIVE
-            elif scan_type == "Network Discovery":
+            elif scan_type_text == "Network Discovery":
                 scan_type_enum = ScanType.DISCOVERY
             else:
                 scan_type_enum = ScanType.CUSTOM
@@ -337,18 +353,34 @@ class ScanLauncherTab(BaseTabModule):
                 elif "T5" in timing_text:
                     timing_template = "T5"
             
+            # Для quick scan и discovery scan игнорируем указанные порты
+            port_range = ""
+            if scan_type_text not in ["Quick Scan", "Network Discovery"]:
+                port_range = ports
+            
+            # Определяем дополнительные опции (игнорируем для quick scan)
+            service_version = False
+            os_detection = False
+            script_scan = False
+            
+            if current_tab_index == 1:  # Advanced tab
+                if scan_type_text != "Quick Scan":
+                    service_version = self.service_version_check.isChecked()
+                    os_detection = self.os_detection_check.isChecked()
+                    script_scan = self.script_scan_check.isChecked()
+            
             # Создаем конфигурацию сканирования
             import uuid
             config = ScanConfig(
                 scan_id=str(uuid.uuid4()),
                 targets=targets,
                 scan_type=scan_type_enum,
-                port_range=ports,
+                port_range=port_range,  # ИСПРАВЛЕНО!
                 threads=self.threads_spinbox.value() if current_tab_index == 1 else 4,
                 timing_template=timing_template,
-                service_version=self.service_version_check.isChecked() if current_tab_index == 1 else False,
-                os_detection=self.os_detection_check.isChecked() if current_tab_index == 1 else False,
-                script_scan=self.script_scan_check.isChecked() if current_tab_index == 1 else False
+                service_version=service_version,
+                os_detection=os_detection,
+                script_scan=script_scan
             )
             
             # Запускаем сканирование
