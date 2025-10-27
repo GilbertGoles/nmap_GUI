@@ -88,7 +88,8 @@ class ScanLauncherTab(BaseTabModule):
         
         layout.addWidget(command_group)
         
-        # Обновляем предпросмотр команды
+        # Обновляем предпросмотр команды при изменении вкладки
+        self.tab_widget.currentChanged.connect(self._update_command_preview)
         self._update_command_preview()
 
     def _create_quick_tab(self):
@@ -165,26 +166,27 @@ class ScanLauncherTab(BaseTabModule):
         self.threads_spinbox = QSpinBox()
         self.threads_spinbox.setRange(1, 16)
         self.threads_spinbox.setValue(4)
+        self.threads_spinbox.valueChanged.connect(self._update_command_preview)
         layout.addRow("Threads:", self.threads_spinbox)
         
-        # Тайминг шаблон
+        # Тайминг шаблон - ИСПРАВЛЕННАЯ ВЕРСИЯ
         self.timing_combo = QComboBox()
         self.timing_combo.addItems(["T0 (Paranoid)", "T1 (Sneaky)", "T2 (Polite)", "T3 (Normal)", "T4 (Aggressive)", "T5 (Insane)"])
         self.timing_combo.setCurrentIndex(3)  # T3 Normal по умолчанию
         self.timing_combo.currentTextChanged.connect(self._update_command_preview)
-        layout.addRow("Timing Template:", self.timing_combo)
+        layout.addRow("Timing:", self.timing_combo)
         
         # Опции
         self.service_version_check = QCheckBox("Service version detection")
-        self.service_version_check.stateChanged.connect(self._update_command_preview)
+        self.service_version_check.toggled.connect(self._update_command_preview)
         layout.addRow(self.service_version_check)
         
         self.os_detection_check = QCheckBox("OS detection")
-        self.os_detection_check.stateChanged.connect(self._update_command_preview)
+        self.os_detection_check.toggled.connect(self._update_command_preview)
         layout.addRow(self.os_detection_check)
         
         self.script_scan_check = QCheckBox("Script scanning (NSE)")
-        self.script_scan_check.stateChanged.connect(self._update_command_preview)
+        self.script_scan_check.toggled.connect(self._update_command_preview)
         layout.addRow(self.script_scan_check)
         
         return widget
@@ -223,17 +225,19 @@ class ScanLauncherTab(BaseTabModule):
         
         # Добавляем тайминг шаблон (только в advanced tab)
         if current_tab_index == 1:
-            timing_map = {
-                "T0 (Paranoid)": "T0",
-                "T1 (Sneaky)": "T1", 
-                "T2 (Polite)": "T2",
-                "T3 (Normal)": "T3",
-                "T4 (Aggressive)": "T4",
-                "T5 (Insane)": "T5"
-            }
             timing_text = self.timing_combo.currentText()
-            if timing_text in timing_map:
-                cmd_parts.append(f"-{timing_map[timing_text]}")
+            if "T0" in timing_text:
+                cmd_parts.append("-T0")
+            elif "T1" in timing_text:
+                cmd_parts.append("-T1")
+            elif "T2" in timing_text:
+                cmd_parts.append("-T2")
+            elif "T3" in timing_text:
+                cmd_parts.append("-T3")
+            elif "T4" in timing_text:
+                cmd_parts.append("-T4")
+            elif "T5" in timing_text:
+                cmd_parts.append("-T5")
         
         # Добавляем тип сканирования
         if scan_type == "Quick Scan":
@@ -266,8 +270,6 @@ class ScanLauncherTab(BaseTabModule):
         
         # ВАЖНО: добавляем вывод в XML (обязательно для работы парсера)
         cmd_parts.append("-oX -")
-        
-        # НЕ добавляем -v, так как он может конфликтовать с XML выводом
         
         command = " ".join(cmd_parts)
         self.command_preview.setPlainText(command)
@@ -318,20 +320,22 @@ class ScanLauncherTab(BaseTabModule):
             else:
                 scan_type_enum = ScanType.CUSTOM
             
-            # Определяем тайминг шаблон
-            timing_template = None
+            # Определяем тайминг шаблон - ИСПРАВЛЕННАЯ ВЕРСИЯ
+            timing_template = "T3"  # по умолчанию
             if current_tab_index == 1:
-                timing_map = {
-                    "T0 (Paranoid)": "0",
-                    "T1 (Sneaky)": "1", 
-                    "T2 (Polite)": "2",
-                    "T3 (Normal)": "3",
-                    "T4 (Aggressive)": "4",
-                    "T5 (Insane)": "5"
-                }
                 timing_text = self.timing_combo.currentText()
-                if timing_text in timing_map:
-                    timing_template = timing_map[timing_text]
+                if "T0" in timing_text:
+                    timing_template = "T0"
+                elif "T1" in timing_text:
+                    timing_template = "T1"
+                elif "T2" in timing_text:
+                    timing_template = "T2"
+                elif "T3" in timing_text:
+                    timing_template = "T3"
+                elif "T4" in timing_text:
+                    timing_template = "T4"
+                elif "T5" in timing_text:
+                    timing_template = "T5"
             
             # Создаем конфигурацию сканирования
             import uuid
