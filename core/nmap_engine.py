@@ -110,6 +110,81 @@ class NmapEngine:
                 status="error",
                 raw_xml=""
             )
+
+    def execute_comprehensive_scan(self, scan_config: ScanConfig) -> ScanResult:
+        """
+        Выполняет комплексное сканирование с определением ОС, сервисов и уязвимостей
+        """
+        try:
+            self.logger.info(f"Starting comprehensive scan: {scan_config.scan_id}")
+            
+            # Базовая команда для комплексного сканирования
+            base_cmd = "nmap -sS -sV -O -A --script vuln,safe,default"
+            
+            # Добавляем цели и вывод
+            command = f"{base_cmd} {' '.join(scan_config.targets)} -oX -"
+            
+            self.logger.info(f"Comprehensive scan command: {command}")
+            
+            # Создаем временный файл для XML
+            with tempfile.NamedTemporaryFile(mode='w+', suffix='.xml', delete=False, encoding='utf-8') as temp_file:
+                xml_file_path = temp_file.name
+            
+            # Запускаем процесс
+            process = subprocess.Popen(
+                command,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                universal_newlines=True
+            )
+            
+            # Сохраняем процесс
+            self.active_processes[scan_config.scan_id] = {
+                'process': process,
+                'config': scan_config,
+                'start_time': datetime.now(),
+                'xml_file': xml_file_path
+            }
+            
+            # Обрабатываем вывод
+            output_thread = threading.Thread(
+                target=self._process_comprehensive_output,
+                args=(process, scan_config, xml_file_path)
+            )
+            output_thread.daemon = True
+            output_thread.start()
+            
+            # Ждем завершения
+            return_code = process.wait()
+            output_thread.join(timeout=10)
+            
+            # Парсим результаты
+            scan_result = self._parse_xml_results(xml_file_path, scan_config)
+            
+            # Очищаем
+            if scan_config.scan_id in self.active_processes:
+                del self.active_processes[scan_config.scan_id]
+            
+            try:
+                os.unlink(xml_file_path)
+            except:
+                pass
+            
+            self.logger.info(f"Comprehensive scan completed: {scan_config.scan_id}")
+            return scan_result
+            
+        except Exception as e:
+            self.logger.error(f"Error executing comprehensive scan: {e}")
+            return ScanResult(
+                scan_id=scan_config.scan_id,
+                config=scan_config,
+                hosts=[],
+                status="error",
+                raw_xml=""
+            )
     
     def _process_nmap_output(self, process: subprocess.Popen, scan_config: ScanConfig, xml_file_path: str):
         """Обрабатывает вывод nmap (stdout и stderr)"""
@@ -165,6 +240,46 @@ class NmapEngine:
         )
         stderr_thread.daemon = True
         stderr_thread.start()
+
+    def _process_comprehensive_output(self, process: subprocess.Popen, scan_config: ScanConfig, xml_file_path: str):
+        """Обрабатывает вывод комплексного сканирования"""
+        try:
+            xml_content = []
+            in_xml = False
+            last_progress = 0
+            
+            for line in process.stdout:
+                line = line.strip()
+                
+                if line.startswith('<?xml'):
+                    in_xml = True
+                    self.logger.debug("Found XML start in comprehensive scan")
+                
+                if in_xml:
+                    xml_content.append(line)
+                    if '</nmaprun>' in line:
+                        break
+                else:
+                    if line:
+                        self.logger.debug(f"Comprehensive scan: {line}")
+                    
+                    # Улучшенный парсинг прогресса для комплексного сканирования
+                    progress = self._parse_comprehensive_progress(line, last_progress)
+                    if progress is not None and progress > last_progress:
+                        last_progress = progress
+                        self.event_bus.scan_progress.emit({
+                            'scan_id': scan_config.scan_id,
+                            'progress': progress,
+                            'status': line[:100]
+                        })
+            
+            # Сохраняем XML
+            if xml_content:
+                with open(xml_file_path, 'w', encoding='utf-8') as f:
+                    f.write('\n'.join(xml_content))
+        
+        except Exception as e:
+            self.logger.error(f"Error processing comprehensive output: {e}")
     
     def _read_stderr(self, process: subprocess.Popen, scan_config: ScanConfig):
         """Читает stderr процесса nmap"""
@@ -202,6 +317,36 @@ class NmapEngine:
                 return 15
             elif "Completed" in line and "scan" in line:
                 return 85
+        except:
+            pass
+        return None
+
+    def _parse_comprehensive_progress(self, line: str, last_progress: int) -> Optional[int]:
+        """
+        Парсит прогресс для комплексного сканирования
+        """
+        try:
+            line_lower = line.lower()
+            
+            if "nmap scan report for" in line:
+                return min(last_progress + 10, 20)
+            elif "host is up" in line:
+                return min(last_progress + 5, 25)
+            elif "port" in line_lower and "state" in line_lower and "service" in line_lower:
+                return min(last_progress + 10, 35)
+            elif "service detection" in line_lower:
+                return min(last_progress + 15, 50)
+            elif "os detection" in line_lower:
+                return min(last_progress + 15, 65)
+            elif "script scanning" in line_lower:
+                return min(last_progress + 20, 85)
+            elif "nmap done:" in line:
+                return 100
+            elif "scan initiated" in line:
+                return 5
+            elif "scanning" in line_lower:
+                return min(last_progress + 2, 15)
+                
         except:
             pass
         return None
