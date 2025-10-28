@@ -15,10 +15,6 @@ class NmapResultParser:
     def get_instance(cls, *args, **kwargs):
         """
         Возвращает единственный экземпляр класса (Singleton)
-        
-        Args:
-            *args: Позиционные аргументы (игнорируются для совместимости)
-            **kwargs: Именованные аргументы (игнорируются для совместимости)
         """
         if cls._instance is None:
             cls._instance = NmapResultParser()
@@ -30,13 +26,6 @@ class NmapResultParser:
     def parse_xml(self, xml_content: str, scan_config: ScanConfig) -> ScanResult:
         """
         Парсит XML вывод nmap и возвращает структурированные результаты
-        
-        Args:
-            xml_content: XML строка с результатами nmap
-            scan_config: Конфигурация сканирования
-            
-        Returns:
-            ScanResult: Структурированные результаты сканирования
         """
         try:
             root = ET.fromstring(xml_content)
@@ -76,6 +65,15 @@ class NmapResultParser:
             scan_info = root.find('scaninfo')
             if scan_info is not None:
                 scan_result.raw_xml = ET.tostring(root, encoding='unicode')
+                
+            # Парсим время начала и окончания
+            start_time = root.get('start')
+            if start_time:
+                try:
+                    scan_result.start_time = datetime.fromtimestamp(int(start_time))
+                except:
+                    pass
+                    
         except:
             pass
     
@@ -124,10 +122,13 @@ class NmapResultParser:
             if os_element is not None:
                 self._parse_os_info(os_element, host_info)
             
-            # Парсим скрипты
+            # Парсим скрипты nmap - ВАЖНО ДЛЯ УЯЗВИМОСТЕЙ
             hostscript_element = host_element.find('hostscript')
             if hostscript_element is not None:
                 self._parse_host_scripts(hostscript_element, host_info)
+            
+            # Парсим скрипты портов - ДОБАВЛЯЕМ ДЛЯ УЯЗВИМОСТЕЙ
+            self._parse_port_scripts(host_element, host_info)
             
             self.logger.info(f"Parsed host {ip}: {len(host_info.ports)} ports, OS: {host_info.os_family}")
             return host_info
@@ -178,7 +179,7 @@ class NmapResultParser:
                     
                     port_info.version = ' '.join(version_parts)
                 
-                # Парсим скрипты nmap для порта
+                # Парсим скрипты nmap для порта - ВАЖНО ДЛЯ УЯЗВИМОСТЕЙ
                 port_scripts = {}
                 for script_element in script_elements:
                     script_id = script_element.get('id')
@@ -187,6 +188,8 @@ class NmapResultParser:
                         port_scripts[script_id] = script_output
                 
                 if port_scripts:
+                    # Сохраняем скрипты в host_info для легкого доступа
+                    # Они будут добавлены позже в _parse_port_scripts
                     port_info.scripts = port_scripts
                 
                 ports.append(port_info)
@@ -227,11 +230,14 @@ class NmapResultParser:
                     os_family = os_class.get('osfamily', '')
                     os_gen = os_class.get('osgen', '')
                     vendor = os_class.get('vendor', '')
+                    os_type = os_class.get('type', '')
                     
                     if os_family and not host_info.os_family:
                         host_info.os_family = os_family
                     if vendor and vendor not in host_info.os_details:
                         host_info.os_details += f" {vendor}"
+                    if os_type:
+                        host_info.os_details += f" [{os_type}]"
             
         except Exception as e:
             self.logger.debug(f"Error parsing OS info: {e}")
@@ -246,14 +252,56 @@ class NmapResultParser:
                 if script_id and script_output:
                     host_info.scripts[script_id] = script_output
                     
-                    # Анализируем специфические скрипты
+                    # Анализируем специфические скрипты для уязвимостей
                     if script_id == "smb-os-discovery":
                         self._parse_smb_os_discovery(script_output, host_info)
                     elif script_id == "snmp-sysdescr":
                         self._parse_snmp_sysdescr(script_output, host_info)
+                    elif "vuln" in script_id.lower():
+                        self.logger.info(f"Found vulnerability script: {script_id}")
         
         except Exception as e:
             self.logger.debug(f"Error parsing host scripts: {e}")
+    
+    def _parse_port_scripts(self, host_element: ET.Element, host_info: HostInfo):
+        """Парсит скрипты для каждого порта - НОВЫЙ МЕТОД ДЛЯ УЯЗВИМОСТЕЙ"""
+        try:
+            ports_element = host_element.find('ports')
+            if ports_element is None:
+                return
+                
+            for port_element in ports_element.findall('port'):
+                port_id = port_element.get('portid')
+                if not port_id:
+                    continue
+                    
+                # Находим соответствующий порт в host_info
+                target_port = None
+                for port in host_info.ports:
+                    if str(port.port) == port_id:
+                        target_port = port
+                        break
+                
+                if not target_port:
+                    continue
+                
+                # Парсим скрипты для этого порта
+                script_elements = port_element.findall('script')
+                for script_element in script_elements:
+                    script_id = script_element.get('id')
+                    script_output = script_element.get('output', '')
+                    
+                    if script_id and script_output:
+                        # Сохраняем скрипт в информации о хосте с привязкой к порту
+                        script_key = f"port{port_id}_{script_id}"
+                        host_info.scripts[script_key] = script_output
+                        
+                        # Логируем скрипты уязвимостей
+                        if any(keyword in script_id.lower() for keyword in ['vuln', 'exploit', 'safe']):
+                            self.logger.info(f"Found {script_id} on port {port_id}")
+        
+        except Exception as e:
+            self.logger.debug(f"Error parsing port scripts: {e}")
     
     def _parse_smb_os_discovery(self, output: str, host_info: HostInfo):
         """Парсит вывод скрипта smb-os-discovery"""
@@ -284,6 +332,9 @@ class NmapResultParser:
                 host_info.os_details = output.strip()
             elif 'Cisco' in output:
                 host_info.os_family = "Cisco IOS"
+                host_info.os_details = output.strip()
+            elif 'RouterOS' in output:
+                host_info.os_family = "MikroTik RouterOS"
                 host_info.os_details = output.strip()
         except:
             pass
