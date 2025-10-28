@@ -36,7 +36,7 @@ class NmapEngine:
     
     def execute_scan(self, scan_config: ScanConfig) -> ScanResult:
         """
-        Выполняет nmap сканирование
+        Выполняет nmap сканирование с таймаутом
         """
         try:
             self.logger.info(f"Starting nmap scan: {scan_config.scan_id}")
@@ -49,6 +49,11 @@ class NmapEngine:
             # Создаем временный файл для XML вывода
             with tempfile.NamedTemporaryFile(mode='w+', suffix='.xml', delete=False, encoding='utf-8') as temp_file:
                 xml_file_path = temp_file.name
+            
+            # ДОБАВЛЯЕМ ТАЙМАУТ ДЛЯ СЛОЖНЫХ СКАНИРОВАНИЙ
+            timeout = 300  # 5 минут для комплексных сканирований
+            if scan_config.scan_type == ScanType.COMPREHENSIVE:
+                timeout = 600  # 10 минут
             
             # Запускаем nmap процесс
             self.logger.info(f"Executing: {command}")
@@ -79,9 +84,20 @@ class NmapEngine:
             output_thread.daemon = True
             output_thread.start()
             
-            # Ждем завершения процесса
-            return_code = process.wait()
-            self.logger.info(f"Nmap process finished with return code: {return_code}")
+            # Ждем завершения процесса с таймаутом
+            try:
+                return_code = process.wait(timeout=timeout)
+                self.logger.info(f"Nmap process finished with return code: {return_code}")
+            except subprocess.TimeoutExpired:
+                self.logger.warning(f"Scan {scan_config.scan_id} timed out, terminating...")
+                self.stop_scan(scan_config.scan_id)
+                return ScanResult(
+                    scan_id=scan_config.scan_id,
+                    config=scan_config,
+                    hosts=[],
+                    status="timeout",
+                    raw_xml=""
+                )
             
             # Даем потоку время завершиться
             output_thread.join(timeout=5)
@@ -129,6 +145,9 @@ class NmapEngine:
             with tempfile.NamedTemporaryFile(mode='w+', suffix='.xml', delete=False, encoding='utf-8') as temp_file:
                 xml_file_path = temp_file.name
             
+            # Таймаут для комплексного сканирования
+            timeout = 600  # 10 минут
+            
             # Запускаем процесс
             process = subprocess.Popen(
                 base_cmd,
@@ -156,9 +175,20 @@ class NmapEngine:
             output_thread.daemon = True
             output_thread.start()
             
-            # Ждем завершения
-            return_code = process.wait()
-            output_thread.join(timeout=10)
+            # Ждем завершения с таймаутом
+            try:
+                return_code = process.wait(timeout=timeout)
+                output_thread.join(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.logger.warning(f"Comprehensive scan {scan_config.scan_id} timed out, terminating...")
+                self.stop_scan(scan_config.scan_id)
+                return ScanResult(
+                    scan_id=scan_config.scan_id,
+                    config=scan_config,
+                    hosts=[],
+                    status="timeout",
+                    raw_xml=""
+                )
             
             # Парсим результаты
             scan_result = self._parse_xml_results(xml_file_path, scan_config)
@@ -512,8 +542,26 @@ class NmapEngine:
             process = process_info['process']
             
             try:
-                process.terminate()
-                process.wait(timeout=5)
+                # НУЖНО ДОБАВИТЬ ПРОВЕРКУ НА СУЩЕСТВОВАНИЕ ПРОЦЕССА
+                if process.poll() is None:  # Процесс еще работает
+                    # Завершаем всю группу процессов
+                    try:
+                        parent = psutil.Process(process.pid)
+                        children = parent.children(recursive=True)
+                        for child in children:
+                            child.terminate()
+                        parent.terminate()
+                        
+                        # Ждем завершения
+                        gone, alive = psutil.wait_procs([parent] + children, timeout=5)
+                        for p in alive:
+                            p.kill()
+                    except (psutil.NoSuchProcess, ProcessLookupError):
+                        pass
+                    
+                    # Дополнительная проверка
+                    process.terminate()
+                    process.wait(timeout=3)
             except (ProcessLookupError, subprocess.TimeoutExpired):
                 try:
                     process.kill()
@@ -527,6 +575,7 @@ class NmapEngine:
                     except:
                         pass
                 
+                # УДАЛЯЕМ ИЗ АКТИВНЫХ СРАЗУ
                 if scan_id in self.active_processes:
                     del self.active_processes[scan_id]
                 
