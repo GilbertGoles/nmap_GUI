@@ -1,17 +1,175 @@
 from PyQt6.QtWidgets import (QVBoxLayout, QGroupBox,
                              QLabel, QTableWidget, QTableWidgetItem,
                              QHeaderView, QTextEdit, QHBoxLayout, QPushButton, 
-                             QMessageBox)  # Добавляем QMessageBox
+                             QMessageBox, QDialog)  # Добавляем QDialog
 from PyQt6.QtCore import pyqtSlot
-from PyQt6.QtGui import QColor  # ДОБАВЛЯЕМ ЭТОТ ИМПОРТ
+from PyQt6.QtGui import QColor
+import re  # ДОБАВЛЯЕМ ИМПОРТ ДЛЯ РЕГУЛЯРНЫХ ВЫРАЖЕНИЙ
 from modules.base_module import BaseTabModule
 from core.event_bus import EventBus
-from shared.models.scan_result import HostInfo
+from shared.models.scan_result import HostInfo, PortInfo
+
+# Добавляем заглушку для CVE checker если его нет
+class CVEChecker:
+    """Заглушка для проверки CVE уязвимостей"""
+    
+    def __init__(self):
+        self.logger = self._setup_logging()
+    
+    def _setup_logging(self):
+        import logging
+        return logging.getLogger(__name__)
+    
+    def check_service_cve(self, service: str, version: str) -> list:
+        """
+        Проверяет CVE уязвимости для сервиса
+        В реальной реализации здесь будет обращение к CVE базе
+        """
+        cves = []
+        
+        try:
+            # Простая заглушка для демонстрации
+            # В реальной системе здесь будет обращение к CVE базе данных
+            service_lower = service.lower()
+            version_lower = version.lower()
+            
+            # Пример проверки для OpenSSH
+            if 'ssh' in service_lower and '6.6.1' in version_lower:
+                cves.append({
+                    'id': 'CVE-2016-6210',
+                    'risk': 'MEDIUM',
+                    'description': 'OpenSSH 6.6.1 allows remote attackers to obtain sensitive information from process memory',
+                    'cvss_score': 5.3,
+                    'source': 'NVD'
+                })
+            
+            # Пример проверки для Apache
+            elif 'http' in service_lower and '2.4.7' in version_lower:
+                cves.append({
+                    'id': 'CVE-2017-3169',
+                    'risk': 'HIGH',
+                    'description': 'Apache HTTP Server mod_ssl vulnerability',
+                    'cvss_score': 7.5,
+                    'source': 'NVD'
+                })
+            
+            # Добавляем общие CVE на основе версий
+            if any(vuln_ver in version_lower for vuln_ver in ['2.4.49', '2.4.50']):
+                cves.append({
+                    'id': 'CVE-2021-41773',
+                    'risk': 'CRITICAL',
+                    'description': 'Apache HTTP Server path traversal vulnerability',
+                    'cvss_score': 9.8,
+                    'source': 'NVD'
+                })
+                
+        except Exception as e:
+            self.logger.debug(f"CVE check error for {service} {version}: {e}")
+        
+        return cves
 
 def create_tab(event_bus: EventBus, dependencies: dict = None):
     return ResultsTableTab(event_bus, dependencies)
 
+class VulnerabilityDetailsDialog(QDialog):
+    """Диалог для отображения деталей уязвимостей"""
+    
+    def __init__(self, vulnerabilities: list, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Vulnerability Details")
+        self.setGeometry(100, 100, 800, 600)
+        
+        layout = QVBoxLayout(self)
+        
+        self.text_edit = QTextEdit()
+        self.text_edit.setReadOnly(True)
+        layout.addWidget(self.text_edit)
+        
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        layout.addWidget(close_btn)
+        
+        self._display_vulnerabilities(vulnerabilities)
+    
+    def _display_vulnerabilities(self, vulnerabilities):
+        """Отображает список уязвимостей"""
+        if not vulnerabilities:
+            self.text_edit.setText("No vulnerabilities found")
+            return
+        
+        html_content = """
+        <html>
+        <head>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 20px; }
+                .vuln { margin: 10px 0; padding: 10px; border-left: 4px solid #f44336; background: #ffeaea; }
+                .critical { border-color: #d32f2f; background: #ffcdd2; }
+                .high { border-color: #f44336; background: #ffeaea; }
+                .medium { border-color: #ff9800; background: #fff3e0; }
+                .low { border-color: #4caf50; background: #e8f5e8; }
+                .risk { font-weight: bold; padding: 2px 8px; border-radius: 3px; }
+                .risk-critical { background: #d32f2f; color: white; }
+                .risk-high { background: #f44336; color: white; }
+                .risk-medium { background: #ff9800; color: white; }
+                .risk-low { background: #4caf50; color: white; }
+                .cve { background: #e3f2fd; border-left: 4px solid #2196f3; }
+                .cve-id { font-family: monospace; font-weight: bold; color: #1976d2; }
+            </style>
+        </head>
+        <body>
+            <h2>Found Vulnerabilities: {count}</h2>
+        """.format(count=len(vulnerabilities))
+        
+        for i, vuln in enumerate(vulnerabilities, 1):
+            risk = vuln.get('risk', 'low').lower()
+            risk_class = f"risk-{risk}"
+            vuln_class = risk
+            
+            # Определяем класс для CVE уязвимостей
+            if vuln.get('type') == 'CVE':
+                vuln_class = 'cve'
+            
+            html_content += f"""
+            <div class="vuln {vuln_class}">
+                <h3>"""
+            
+            # Добавляем CVE ID если есть
+            if vuln.get('type') == 'CVE':
+                html_content += f"""<span class="cve-id">{vuln.get('id', 'Unknown CVE')}</span> - """
+            
+            html_content += f"""Vulnerability #{i} <span class="risk {risk_class}">{vuln.get('risk', 'UNKNOWN')}</span></h3>
+                <p><strong>Service:</strong> {vuln.get('service', 'Unknown')}</p>
+                <p><strong>Port:</strong> {vuln.get('port', 'Unknown')}</p>
+                <p><strong>Version:</strong> {vuln.get('version', 'Unknown')}</p>"""
+            
+            # Добавляем CVSS score для CVE
+            if vuln.get('cvss_score'):
+                html_content += f"""<p><strong>CVSS Score:</strong> {vuln.get('cvss_score')}</p>"""
+            
+            html_content += f"""
+                <p><strong>Issue:</strong> {vuln.get('issue', 'No details')}</p>
+                <p><strong>Recommendation:</strong> {vuln.get('recommendation', 'No recommendation')}</p>"""
+            
+            # Добавляем источник для CVE
+            if vuln.get('source'):
+                html_content += f"""<p><strong>Source:</strong> {vuln.get('source')}</p>"""
+            elif vuln.get('script'):
+                html_content += f"""<p><strong>Script:</strong> {vuln.get('script', 'N/A')}</p>"""
+            
+            html_content += """
+            </div>
+            """
+        
+        html_content += "</body></html>"
+        self.text_edit.setHtml(html_content)
+
 class ResultsTableTab(BaseTabModule):
+    
+    def __init__(self, event_bus: EventBus, dependencies: dict = None):
+        super().__init__(event_bus, dependencies)
+        self.cve_checker = CVEChecker()  # Инициализируем CVE checker
+        self.current_results = None
+        self.current_host = None
     
     def _setup_event_handlers(self):
         """Настройка обработчиков событий"""
@@ -75,6 +233,12 @@ class ResultsTableTab(BaseTabModule):
         self.details_text.setMaximumHeight(200)
         details_layout.addWidget(self.details_text)
         
+        # Кнопка для просмотра уязвимостей (будет добавляться динамически)
+        self.vuln_btn = QPushButton("View Vulnerability Details")
+        self.vuln_btn.clicked.connect(self._show_current_host_vulnerabilities)
+        self.vuln_btn.setVisible(False)  # Скрыта по умолчанию
+        details_layout.addWidget(self.vuln_btn)
+        
         layout.addWidget(details_group)
         
         # Статус
@@ -83,6 +247,7 @@ class ResultsTableTab(BaseTabModule):
         
         # Инициализируем результаты
         self.current_results = None
+        self.current_host = None  # Текущий выбранный хост
     
     def _export_results(self):
         """Экспортирует результаты в файл"""
@@ -129,6 +294,14 @@ class ResultsTableTab(BaseTabModule):
                     lines.append(f"  {port.port}/{port.protocol}: {port.service} {port.version or ''}")
             else:
                 lines.append("No open ports")
+            
+            # Добавляем информацию об уязвимостях в экспорт
+            vulnerabilities = self._extract_vulnerabilities(host)
+            if vulnerabilities:
+                lines.append(f"Vulnerabilities: {len(vulnerabilities)} found")
+                for i, vuln in enumerate(vulnerabilities, 1):
+                    vuln_type = f"[{vuln.get('type', 'SCRIPT')}]" if vuln.get('type') else ""
+                    lines.append(f"  {i}. {vuln_type} {vuln.get('service', 'Unknown')} (Port {vuln.get('port', 'Unknown')}) - Risk: {vuln.get('risk', 'Unknown')}")
         
         return '\n'.join(lines)
     
@@ -138,7 +311,7 @@ class ResultsTableTab(BaseTabModule):
         scan_id = data.get('scan_id')
         results = data.get('results')
         
-        print(f"🔵 [ResultsTable] Scan completed: {scan_id}, has results: {results is not None}")  # ДЕБАГ
+        print(f"🔵 [ResultsTable] Scan completed: {scan_id}, has results: {results is not None}")
         
         if results:
             self.current_results = results
@@ -150,7 +323,7 @@ class ResultsTableTab(BaseTabModule):
         scan_id = data.get('scan_id')
         results = data.get('results')
         
-        print(f"🔵 [ResultsTable] Results updated: {scan_id}, has results: {results is not None}")  # ДЕБАГ
+        print(f"🔵 [ResultsTable] Results updated: {scan_id}, has results: {results is not None}")
         
         if results:
             self.current_results = results
@@ -158,7 +331,7 @@ class ResultsTableTab(BaseTabModule):
     
     def _display_results(self, results):
         """Отображает результаты в таблице"""
-        print(f"🔵 [ResultsTable] Displaying results: {len(results.hosts) if results and hasattr(results, 'hosts') else 0} hosts")  # ДЕБАГ
+        print(f"🔵 [ResultsTable] Displaying results: {len(results.hosts) if results and hasattr(results, 'hosts') else 0} hosts")
         
         if not results or not hasattr(results, 'hosts'):
             self.status_label.setText("No results to display")
@@ -219,27 +392,13 @@ class ResultsTableTab(BaseTabModule):
     
     def _count_vulnerabilities(self, host: HostInfo) -> int:
         """Считает количество уязвимостей для хоста"""
-        count = 0
-        
-        # Проверяем скрипты nmap на наличие индикаторов уязвимостей
-        for script_name, script_output in host.scripts.items():
-            script_lower = script_output.lower()
-            # Простые индикаторы уязвимостей в выводе скриптов
-            if any(keyword in script_lower for keyword in ['vulnerable', 'vulnerability', 'cve', 'exploit', 'risk']):
-                count += 1
-        
-        # Проверяем версии сервисов на известные уязвимости
-        for port in host.ports:
-            if port.version:
-                version_lower = port.version.lower()
-                # Простые проверки уязвимых версий
-                if any(vuln in version_lower for vuln in ['2.4.49', '2.4.50', 'vsftpd 2.3.4']):
-                    count += 1
-        
-        return count
+        vulnerabilities = self._extract_vulnerabilities(host)
+        return len(vulnerabilities)
     
     def _show_host_details(self, host: HostInfo):
         """Показывает детальную информацию о хосте"""
+        self.current_host = host
+        
         details = f"Host: {host.ip}\n"
         details += f"Hostname: {host.hostname or 'N/A'}\n"
         details += f"Status: {host.state}\n"
@@ -254,25 +413,160 @@ class ResultsTableTab(BaseTabModule):
                 details += f"  Service: {port.service}\n"
                 if port.version:
                     details += f"  Version: {port.version}\n"
-                details += f"  State: {port.state}\n"
-                
-                # Добавляем информацию о скриптах если есть
-                if hasattr(host, 'scripts') and host.scripts:
-                    port_scripts = {k: v for k, v in host.scripts.items() if f"port{port.port}" in k}
-                    if port_scripts:
-                        details += f"  Scripts: {', '.join(port_scripts.keys())}\n"
-                
-                details += "-" * 20 + "\n"
+                details += f"  State: {port.state}\n\n"
         else:
             details += "No open ports found\n"
         
         # Добавляем информацию об уязвимостях
-        vulnerabilities = self._count_vulnerabilities(host)
-        if vulnerabilities > 0:
-            details += f"\n⚠️  Potential Vulnerabilities Found: {vulnerabilities}\n"
-            details += "Check the scripts output for details.\n"
+        vulnerabilities = self._extract_vulnerabilities(host)
+        if vulnerabilities:
+            details += f"\n⚠️  Potential Vulnerabilities Found: {len(vulnerabilities)}\n"
+            
+            # Считаем CVE и скриптовые уязвимости отдельно
+            cve_count = sum(1 for v in vulnerabilities if v.get('type') == 'CVE')
+            script_count = len(vulnerabilities) - cve_count
+            
+            if cve_count > 0:
+                details += f"  - CVE Vulnerabilities: {cve_count}\n"
+            if script_count > 0:
+                details += f"  - Script Detections: {script_count}\n"
+                
+            details += "Click 'View Details' for more information.\n"
+            self.vuln_btn.setVisible(True)
+        else:
+            self.vuln_btn.setVisible(False)
         
         self.details_text.setPlainText(details)
+    
+    def _show_current_host_vulnerabilities(self):
+        """Показывает детали уязвимостей для текущего хоста"""
+        if self.current_host:
+            self._show_vulnerability_details(self.current_host)
+    
+    def _show_vulnerability_details(self, host: HostInfo):
+        """Показывает детали уязвимостей для хоста"""
+        vulnerabilities = self._extract_vulnerabilities(host)
+        
+        if vulnerabilities:
+            dialog = VulnerabilityDetailsDialog(vulnerabilities, self)
+            dialog.exec()
+        else:
+            QMessageBox.information(self, "No Vulnerabilities", "No vulnerabilities found for this host")
+    
+    def _extract_vulnerabilities(self, host: HostInfo) -> list:
+        """Извлекает информацию об уязвимостях из скриптов nmap и CVE баз"""
+        vulnerabilities = []
+        
+        # Анализируем скрипты nmap
+        if hasattr(host, 'scripts') and host.scripts:
+            for script_name, script_output in host.scripts.items():
+                vuln_info = self._parse_vulnerability_from_script(script_name, script_output, host)
+                if vuln_info:
+                    vulnerabilities.append(vuln_info)
+        
+        # Проверяем CVE для сервисов
+        for port in host.ports:
+            if port.state == "open" and port.service and port.version:
+                cve_vulns = self._check_cve_vulnerabilities(port, host)
+                vulnerabilities.extend(cve_vulns)
+        
+        return vulnerabilities
+    
+    def _check_cve_vulnerabilities(self, port: PortInfo, host: HostInfo) -> list:
+        """Проверяет CVE уязвимости для сервиса"""
+        vulnerabilities = []
+        
+        try:
+            # Проверяем CVE для конкретного сервиса
+            cves = self.cve_checker.check_service_cve(port.service, port.version)
+            
+            for cve in cves:
+                vulnerabilities.append({
+                    'type': 'CVE',
+                    'id': cve['id'],
+                    'service': port.service,
+                    'port': str(port.port),
+                    'version': port.version,
+                    'risk': cve['risk'],
+                    'issue': cve['description'],
+                    'cvss_score': cve.get('cvss_score'),
+                    'recommendation': f"Update {port.service} to latest version",
+                    'source': cve.get('source', 'CVE Database')
+                })
+                
+        except Exception as e:
+            self.logger.debug(f"CVE check failed for {port.service}: {e}")
+        
+        return vulnerabilities
+    
+    def _parse_vulnerability_from_script(self, script_name: str, script_output: str, host: HostInfo) -> dict:
+        """Парсит информацию об уязвимости из вывода скрипта"""
+        script_lower = script_output.lower()
+        
+        # Определяем уровень риска по ключевым словам
+        risk = "LOW"
+        if any(keyword in script_lower for keyword in ['exploit', 'remote code', 'privilege escalation', 'critical']):
+            risk = "HIGH"
+        elif any(keyword in script_lower for keyword in ['vulnerable', 'vulnerability', 'cve', 'risk']):
+            risk = "MEDIUM"
+        
+        # Находим связанный порт
+        port_match = re.search(r'port(\d+)_', script_name)
+        port_num = port_match.group(1) if port_match else "unknown"
+        
+        # Находим сервис
+        service = "unknown"
+        version = "unknown"
+        for port in host.ports:
+            if str(port.port) == port_num:
+                service = port.service
+                version = port.version or "unknown"
+                break
+        
+        return {
+            'type': 'SCRIPT',
+            'script': script_name,
+            'service': service,
+            'port': port_num,
+            'version': version,
+            'risk': risk,
+            'issue': script_output[:200] + "..." if len(script_output) > 200 else script_output,
+            'recommendation': 'Investigate the script output for details'
+        }
+    
+    def _check_version_vulnerabilities(self, port, host: HostInfo) -> list:
+        """Проверяет версии сервисов на известные уязвимости"""
+        vulnerabilities = []
+        version_lower = port.version.lower()
+        
+        # Проверяем известные уязвимые версии
+        if 'openssh' in version_lower:
+            if any(vuln_ver in version_lower for vuln_ver in ['6.6.1', '7.1']):
+                vulnerabilities.append({
+                    'type': 'VERSION',
+                    'script': 'version_detection',
+                    'service': port.service,
+                    'port': str(port.port),
+                    'risk': 'MEDIUM',
+                    'issue': f'Potential vulnerabilities in {port.version}',
+                    'recommendation': 'Update to latest OpenSSH version',
+                    'version': port.version
+                })
+        
+        elif 'apache' in version_lower:
+            if any(vuln_ver in version_lower for vuln_ver in ['2.4.49', '2.4.50']):
+                vulnerabilities.append({
+                    'type': 'VERSION',
+                    'script': 'version_detection',
+                    'service': port.service,
+                    'port': str(port.port),
+                    'risk': 'HIGH',
+                    'issue': f'Known vulnerabilities in Apache {port.version}',
+                    'recommendation': 'Update Apache to latest version',
+                    'version': port.version
+                })
+        
+        return vulnerabilities
     
     def _on_row_selected(self):
         """Обрабатывает выбор строки в таблице"""
@@ -295,3 +589,5 @@ class ResultsTableTab(BaseTabModule):
         self.details_text.clear()
         self.status_label.setText("No results available")
         self.current_results = None
+        self.current_host = None
+        self.vuln_btn.setVisible(False)
