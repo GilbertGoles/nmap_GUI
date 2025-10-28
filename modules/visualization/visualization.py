@@ -391,6 +391,7 @@ class VisualizationTab(BaseTabModule):
         group = QGroupBox("Network Graph")
         layout = QVBoxLayout(group)
         
+        # ИНИЦИАЛИЗИРУЕМ ПРАВИЛЬНО
         self.graph_view = GraphView()
         layout.addWidget(self.graph_view)
         
@@ -506,8 +507,10 @@ class VisualizationTab(BaseTabModule):
         """Строит граф из результатов сканирования"""
         print(f"🟣 [Visualization] Building graph from results...")  # ДЕБАГ
         
-        if not hasattr(self, 'graph_view') or not self.graph_view:
-            print("❌ [Visualization] Graph view not initialized")  # ДЕБАГ
+        # ПРОВЕРЯЕМ, ЧТО GRAPH_VIEW ИНИЦИАЛИЗИРОВАН
+        if not hasattr(self, 'graph_view') or self.graph_view is None:
+            print("❌ [Visualization] Graph view not initialized - recreating")
+            # Пересоздаем если нужно
             return
         
         self.graph_view.clear_graph()
@@ -573,7 +576,7 @@ class VisualizationTab(BaseTabModule):
     
     def _apply_layout(self):
         """Применяет выбранный layout"""
-        if not self.graph_view.nodes:
+        if not self.graph_view or not self.graph_view.nodes:
             return
         
         layout_type = self.layout_combo.currentText()
@@ -589,6 +592,9 @@ class VisualizationTab(BaseTabModule):
     
     def _apply_circular_layout(self):
         """Применяет круговой layout"""
+        if not self.graph_view:
+            return
+            
         nodes = list(self.graph_view.nodes.values())
         radius = 200
         angle_step = 2 * math.pi / len(nodes)
@@ -604,6 +610,9 @@ class VisualizationTab(BaseTabModule):
     
     def _apply_grid_layout(self):
         """Применяет grid layout"""
+        if not self.graph_view:
+            return
+            
         nodes = list(self.graph_view.nodes.values())
         cols = math.ceil(math.sqrt(len(nodes)))
         spacing = 100
@@ -620,6 +629,9 @@ class VisualizationTab(BaseTabModule):
     
     def _apply_hierarchical_layout(self):
         """Применяет иерархический layout"""
+        if not self.graph_view:
+            return
+            
         # Простая иерархия: хосты на одном уровне, сервисы на другом
         hosts = [n for n in self.graph_view.nodes.values() if n.type == NodeType.HOST]
         services = [n for n in self.graph_view.nodes.values() if n.type == NodeType.SERVICE]
