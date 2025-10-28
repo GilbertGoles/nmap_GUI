@@ -248,12 +248,12 @@ class NmapEngine:
         return command
 
     def _process_nmap_output(self, process: subprocess.Popen, scan_config: ScanConfig, xml_file_path: str):
-        """Обрабатывает вывод nmap (stdout и stderr) - УЛУЧШЕННАЯ ВЕРСИЯ ДЛЯ СКРИПТОВ"""
+        """Обрабатывает вывод nmap (stdout и stderr) - УЛУЧШЕННАЯ ВЕРСИЯ"""
         try:
             xml_content = []
             in_xml = False
             last_progress = 0
-            script_output_buffer = []  # БУФЕР ДЛЯ ВЫВОДА СКРИПТОВ
+            script_output_buffer = []
             
             # Читаем stdout
             for line in process.stdout:
@@ -263,9 +263,6 @@ class NmapEngine:
                 if line.startswith('<?xml'):
                     in_xml = True
                     self.logger.debug("Found XML start")
-                    # Сохраняем вывод скриптов до начала XML
-                    if script_output_buffer:
-                        self.logger.info(f"Script output before XML: {len(script_output_buffer)} lines")
                 
                 if in_xml:
                     xml_content.append(line)
@@ -276,32 +273,28 @@ class NmapEngine:
                     # Сохраняем вывод скриптов
                     script_output_buffer.append(line)
                     
-                    # Логируем важные события скриптов
-                    if "NSE:" in line or "script" in line.lower():
-                        self.logger.debug(f"Nmap script: {line}")
+                    # Логируем важные события
+                    self.logger.info(f"Nmap output: {line}")
                     
-                    # УЛУЧШЕННЫЙ ПАРСИНГ ПРОГРЕССА ДЛЯ СКРИПТОВ
-                    progress = self._parse_script_progress(line, last_progress)
+                    # ОБНОВЛЕННЫЙ ПАРСИНГ ПРОГРЕССА
+                    progress = self._parse_detailed_progress(line, last_progress)
                     if progress is not None and progress > last_progress:
                         last_progress = progress
                         self.event_bus.scan_progress.emit({
                             'scan_id': scan_config.scan_id,
                             'progress': progress,
-                            'status': line[:100]
+                            'status': line[:100] if line else f"Progress: {progress}%"
                         })
             
             # Сохраняем XML
             if xml_content:
                 with open(xml_file_path, 'w', encoding='utf-8') as f:
                     f.write('\n'.join(xml_content))
-                self.logger.debug(f"Saved {len(xml_content)} lines of XML")
-            else:
-                self.logger.warning("No XML content received from nmap")
                     
         except Exception as e:
             self.logger.error(f"Error processing nmap output: {e}")
         
-        # Обрабатываем stderr в отдельном потоке
+        # Обрабатываем stderr
         stderr_thread = threading.Thread(
             target=self._read_stderr,
             args=(process, scan_config)
@@ -364,27 +357,41 @@ class NmapEngine:
         except Exception as e:
             self.logger.error(f"Error reading stderr: {e}")
 
-    def _parse_progress_from_output(self, line: str, last_progress: int) -> Optional[int]:
+    def _parse_detailed_progress(self, line: str, last_progress: int) -> Optional[int]:
         """
-        Парсит прогресс из вывода nmap
+        Улучшенный парсинг прогресса из вывода nmap
         """
         try:
-            if "Nmap scan report for" in line:
-                return min(last_progress + 20, 80)
-            elif "PORT" in line and "STATE" in line and "SERVICE" in line:
-                return min(last_progress + 10, 90)
-            elif "Nmap done:" in line:
+            line_lower = line.lower()
+            
+            # Основные этапы сканирования
+            if "nmap scan report for" in line:
+                return min(last_progress + 15, 85)
+            elif "scanning" in line and "hosts" in line:
+                return min(last_progress + 5, 20)
+            elif "completed connect scan" in line:
+                return min(last_progress + 10, 35)
+            elif "completed syn stealth scan" in line:
+                return min(last_progress + 10, 35)
+            elif "service scan" in line and "timing" in line:
+                return min(last_progress + 15, 50)
+            elif "os detection" in line and "timing" in line:
+                return min(last_progress + 15, 65)
+            elif "script scanning" in line:
+                return min(last_progress + 20, 85)
+            elif "nse: script scanning" in line:
+                return min(last_progress + 10, 75)
+            elif "completed nse at" in line:
+                return 90
+            elif "nmap done:" in line:
                 return 100
-            elif "discovered" in line and "open port" in line:
-                return min(last_progress + 5, 95)
             elif "scan initiated" in line:
-                return 10
-            elif "Host is up" in line:
-                return 30
-            elif "Scanning" in line and "hosts" in line:
-                return 15
-            elif "Completed" in line and "scan" in line:
-                return 85
+                return 5
+            elif "host is up" in line:
+                return min(last_progress + 10, 25)
+            elif "discovered open port" in line:
+                return min(last_progress + 2, 95)
+                
         except:
             pass
         return None
