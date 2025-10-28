@@ -365,8 +365,10 @@ class NmapEngine:
                 cmd_parts.append(f"-T{scan_config.timing_template}")
         
         # Опции сканирования на основе типа
+        # --- ИСПРАВЛЕНИЕ 1: Удаляем '-F' для quick и используем '-sS' для большинства ---
         if scan_config.scan_type.value == "quick":
-            cmd_parts.append("-F")
+            # Для Quick Scan используем SYN сканирование вместо быстрого сканирования 100 портов
+            cmd_parts.append("-sS")
         elif scan_config.scan_type.value == "stealth":
             cmd_parts.append("-sS")
         elif scan_config.scan_type.value == "comprehensive":
@@ -374,19 +376,25 @@ class NmapEngine:
         elif scan_config.scan_type.value == "discovery":
             cmd_parts.append("-sn")
         
-        # Дополнительные опции
-        if scan_config.service_version and scan_config.scan_type.value != "quick":
-            cmd_parts.append("-sV")
+        # --- ИСПРАВЛЕНИЕ 2: Включаем опции для Quick Scan, если они выбраны ---
+        # NOTE: Мы не хотим включать '-sV', '-O', '-sC' для discovery
+        is_port_scan = scan_config.scan_type.value not in ["discovery", "custom"]
         
-        if scan_config.os_detection and scan_config.scan_type.value != "quick":
-            cmd_parts.append("-O")
+        if scan_config.service_version and is_port_scan: # Больше не исключаем 'quick'
+            if "-sV" not in cmd_parts:
+                cmd_parts.append("-sV")
         
-        if scan_config.script_scan and scan_config.scan_type.value != "quick":
-            cmd_parts.append("-sC")
+        if scan_config.os_detection and is_port_scan: # Больше не исключаем 'quick'
+            if "-O" not in cmd_parts:
+                cmd_parts.append("-O")
+        
+        if scan_config.script_scan and is_port_scan: # Больше не исключаем 'quick'
+            if "-sC" not in cmd_parts:
+                cmd_parts.append("-sC")
         
         # Диапазон портов
         if (scan_config.port_range and 
-            scan_config.scan_type.value not in ["discovery", "quick"]):
+            scan_config.scan_type.value not in ["discovery", "quick", "custom"]):
             cmd_parts.append(f"-p {scan_config.port_range}")
         
         # Пользовательская команда
