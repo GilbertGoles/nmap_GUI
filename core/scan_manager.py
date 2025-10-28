@@ -78,25 +78,29 @@ class ScanManager:
                 continue
     
     def _execute_scan(self, job: ScanJob):
-        """Выполняет сканирование через nmap движок"""
+        """Выполняет сканирование через nmap движок - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
         try:
-            # === ИСПРАВЛЕНИЕ: Убедимся, что ScanConfig содержит уникальный ID из ScanJob ===
-            # Чтобы NmapEngine логировал правильный ID вместо "scan_1"
-            job.config.scan_id = job.id 
-            # ===============================================================================
+            # === ВАЖНОЕ ИСПРАВЛЕНИЕ: Сохраняем оригинальный scan_id из конфигурации ===
+            original_scan_id = job.config.scan_id
+            # Временно устанавливаем ID из job для корректного отслеживания
+            job.config.scan_id = job.id
             
             job.status = ScanStatus.RUNNING
             
             # Выполняем реальное сканирование
             job.result = self.nmap_engine.execute_scan(job.config)
             
+            # === ВОССТАНАВЛИВАЕМ оригинальный ID в результатах ===
+            if job.result:
+                job.result.scan_id = original_scan_id or job.id
+                
             if job.status == ScanStatus.RUNNING:
                 job.status = ScanStatus.COMPLETED
                 job.progress = 100
                 
                 # Публикуем завершение сканирования
                 self.event_bus.scan_completed.emit({
-                    'scan_id': job.id,
+                    'scan_id': job.id,  # Используем job.id для consistency
                     'results': job.result,
                     'status': ScanStatus.COMPLETED.value
                 })
@@ -109,10 +113,6 @@ class ScanManager:
                 
                 # Добавляем в историю
                 self.scan_history.append(job)
-                
-                # Удаляем из активных сканирований НЕМЕДЛЕННО после отправки сигнала
-                if job.id in self.active_scans:
-                    del self.active_scans[job.id]  # <-- Это решает проблему "Stopped scan"
                 
         except Exception as e:
             job.status = ScanStatus.ERROR
@@ -129,8 +129,10 @@ class ScanManager:
                 'error': str(e)
             })
             
-            # В случае ошибки тоже удаляем из активных
-            if job.id in self.active_scans:
+        finally:
+            # Удаляем из активных сканирований в любом случае (успех или ошибка)
+            # Но только если сканирование не было остановлено вручную
+            if job.id in self.active_scans and job.status != ScanStatus.STOPPED:
                 del self.active_scans[job.id]
     
     def _on_scan_progress(self, data):
@@ -172,12 +174,19 @@ class ScanManager:
             self.nmap_engine.stop_scan(scan_id)
             
             # Удаляем из активных сканирований НЕМЕДЛЕННО
-            del self.active_scans[scan_id]
+            if scan_id in self.active_scans:
+                del self.active_scans[scan_id]
     
     def get_scan_status(self, scan_id: str) -> ScanStatus:
         """Возвращает статус сканирования"""
         if scan_id in self.active_scans:
             return self.active_scans[scan_id].status
+        
+        # Проверяем историю для завершенных сканирований
+        for job in self.scan_history:
+            if job.id == scan_id:
+                return job.status
+                
         return ScanStatus.ERROR
     
     def get_queue_size(self) -> int:
@@ -198,18 +207,35 @@ class ScanManager:
         """Приостанавливает сканирование"""
         if scan_id in self.active_scans and self.active_scans[scan_id].status == ScanStatus.RUNNING:
             self.active_scans[scan_id].status = ScanStatus.PAUSED
-            # Note: NmapEngine не поддерживает паузу напрямую, но можно реализовать через сигналы
+            self.event_bus.scan_paused.emit({'scan_id': scan_id})
     
     def resume_scan(self, scan_id: str):
         """Возобновляет сканирование"""
         if scan_id in self.active_scans and self.active_scans[scan_id].status == ScanStatus.PAUSED:
             self.active_scans[scan_id].status = ScanStatus.RUNNING
-            # Note: NmapEngine не поддерживает возобновление напрямую, но можно реализовать через сигналы
+            self.event_bus.scan_resumed.emit({'scan_id': scan_id})
     
     def stop_scan(self, scan_id: str):
         """Останавливает сканирование"""
         if scan_id in self.active_scans:
             self._on_scan_stopped({'scan_id': scan_id})
+    
+    def get_scan_result(self, scan_id: str) -> ScanResult:
+        """Возвращает результаты сканирования"""
+        # Проверяем активные сканирования
+        if scan_id in self.active_scans:
+            return self.active_scans[scan_id].result
+        
+        # Проверяем историю
+        for job in self.scan_history:
+            if job.id == scan_id:
+                return job.result
+                
+        return None
+    
+    def clear_history(self):
+        """Очищает историю сканирований"""
+        self.scan_history.clear()
     
     def shutdown(self):
         """Корректное завершение работы менеджера"""
