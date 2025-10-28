@@ -12,6 +12,37 @@ DEFAULT_SCAN_THREADS = 4
 DEFAULT_TIMING_TEMPLATE = "T4"
 DEFAULT_PORT_RANGE = "1-1000"
 DEFAULT_OUTPUT_FORMAT = "xml"
+DEFAULT_SCAN_INTENSITY = "safe"  # НОВАЯ КОНСТАНТА
+
+# Уровни интенсивности сканирования
+SCAN_INTENSITIES = {
+    "safe": {
+        "name": "SAFE",
+        "description": "Basic security checks only",
+        "scripts": "safe,default",
+        "risk_level": "LOW"
+    },
+    "normal": {
+        "name": "NORMAL", 
+        "description": "Standard security assessment",
+        "scripts": "safe,default,version,discovery",
+        "risk_level": "MEDIUM"
+    },
+    "aggressive": {
+        "name": "AGGRESSIVE",
+        "description": "Advanced vulnerability detection",
+        "scripts": "safe,default,version,discovery,vuln",
+        "risk_level": "HIGH",
+        "warning": "May trigger security systems"
+    },
+    "penetration": {
+        "name": "PENETRATION",
+        "description": "Full penetration testing",
+        "scripts": "safe,default,version,discovery,vuln,exploit",
+        "risk_level": "CRITICAL",
+        "warning": "REQUIRES WRITTEN AUTHORIZATION - Can disrupt services"
+    }
+}
 
 # Цвета для UI
 COLORS = {
@@ -22,7 +53,11 @@ COLORS = {
     'error': '#F44336',
     'background': '#F5F5F5',
     'text': '#212121',
-    'border': '#BDBDBD'
+    'border': '#BDBDBD',
+    'risk_low': '#4CAF50',
+    'risk_medium': '#FF9800',
+    'risk_high': '#F44336',
+    'risk_critical': '#8B0000'
 }
 
 # Настройки визуализации
@@ -44,12 +79,26 @@ CRITICAL_SERVICES = {
 
 # Шаблоны уязвимых версий (для демонстрации)
 VULNERABLE_VERSIONS = {
-    'apache': ['2.4.49', '2.4.50'],
-    'openssh': ['7.0', '7.1', '7.2', '8.0'],
-    'ftp': ['vsftpd 2.3.4'],
-    'samba': ['3.0.0', '3.0.1', '3.0.2', '4.0.0'],
-    'tomcat': ['7.0.0', '7.0.1', '8.0.0'],
-    'iis': ['6.0', '7.0', '7.5']
+    'apache': [
+        ('2.4.49', 'HIGH', 'CVE-2021-41773 - Path Traversal'),
+        ('2.4.50', 'HIGH', 'CVE-2021-42013 - Path Traversal')
+    ],
+    'openssh': [
+        ('7.0', 'MEDIUM', 'Multiple vulnerabilities'),
+        ('7.1', 'MEDIUM', 'Multiple vulnerabilities'), 
+        ('7.2', 'MEDIUM', 'Multiple vulnerabilities')
+    ],
+    'ftp': [
+        ('vsftpd 2.3.4', 'HIGH', 'Backdoor command execution')
+    ],
+    'samba': [
+        ('3.0.0', 'HIGH', 'Multiple vulnerabilities'),
+        ('3.0.1', 'HIGH', 'Multiple vulnerabilities')
+    ],
+    'tomcat': [
+        ('7.0.0', 'MEDIUM', 'Initial release - consider upgrading'),
+        ('8.0.0', 'MEDIUM', 'Initial release - consider upgrading')
+    ]
 }
 
 # Поддерживаемые форматы экспорта
@@ -67,7 +116,8 @@ ERROR_MESSAGES = {
     'scan_failed': 'Scan failed to execute',
     'parse_error': 'Failed to parse scan results',
     'file_not_found': 'File not found',
-    'permission_denied': 'Permission denied'
+    'permission_denied': 'Permission denied',
+    'intensity_warning': 'High intensity scan requires proper authorization'
 }
 
 # Регулярные выражения для валидации
@@ -78,4 +128,12 @@ REGEX_PATTERNS = {
     'port': r'^\d{1,5}$',
     'port_range': r'^\d{1,5}-\d{1,5}$',
     'port_list': r'^\d{1,5}(,\d{1,5})*$'
+}
+
+# Коды рисков для визуализации
+RISK_LEVELS = {
+    'LOW': {'color': '#4CAF50', 'description': 'Low risk'},
+    'MEDIUM': {'color': '#FF9800', 'description': 'Medium risk'},
+    'HIGH': {'color': '#F44336', 'description': 'High risk'},
+    'CRITICAL': {'color': '#8B0000', 'description': 'Critical risk'}
 }
