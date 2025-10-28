@@ -174,6 +174,7 @@ class ScanLauncherTab(QWidget):
         self.event_bus.scan_progress.connect(self._on_scan_progress)
         self.event_bus.scan_completed.connect(self._on_scan_completed)
         self.event_bus.scan_started.connect(self._on_scan_started)
+        self.event_bus.scan_stopped.connect(self._on_scan_stopped)  # НОВЫЙ СИГНАЛ
         
         # Обновляем видимость опций при изменении типа сканирования
         self.scan_type_combo.currentTextChanged.connect(self._update_ui_for_scan_type)
@@ -293,8 +294,9 @@ class ScanLauncherTab(QWidget):
         """Останавливает текущее сканирование"""
         if self.current_scan_id:
             self.scan_manager.stop_scan(self.current_scan_id)
-            self.log_output.append(f"⏹️ Stopped scan: {self.current_scan_id}\n")
-            self._reset_ui()
+            self.log_output.append(f"⏹️ Stopping scan: {self.current_scan_id}\n")
+            # НЕ СБРАСЫВАЕМ UI СРАЗУ - ждем подтверждения остановки
+            self.stop_btn.setEnabled(False)
     
     def _reset_ui(self):
         """Сбрасывает UI после завершения сканирования"""
@@ -379,6 +381,14 @@ class ScanLauncherTab(QWidget):
                 self.log_output.append(f"❌ Scan {scan_id} failed: {error_msg}")
                 
             self.log_output.append("")  # Пустая строка для разделения
+            self._reset_ui()
+
+    @pyqtSlot(dict)
+    def _on_scan_stopped(self, data):
+        """Обрабатывает остановку сканирования"""
+        scan_id = data.get('scan_id')
+        if scan_id == self.current_scan_id:
+            self.log_output.append(f"✅ Scan {scan_id} stopped successfully\n")
             self._reset_ui()
 
 
