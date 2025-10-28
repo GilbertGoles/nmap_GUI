@@ -180,7 +180,8 @@ class ScanLauncherTab(QWidget):
             }
             
             config = ScanConfig(
-                scan_id=f"scan_{len(self.scan_manager.get_active_scans()) + 1}",
+                # === ИСПРАВЛЕНИЕ: УДАЛЯЕМ присвоение временного ID ===
+                # ScanManager сам сгенерирует уникальный UUID через ScanJob
                 targets=targets,
                 scan_type=scan_type_map[self.scan_type_combo.currentText()],
                 timing_template=f"T{self.timing_combo.currentIndex()}",
@@ -192,7 +193,7 @@ class ScanLauncherTab(QWidget):
             )
             
             # Запускаем сканирование
-            self.current_scan_id = self.scan_manager.submit_scan(config)
+            self.current_scan_id = self.scan_manager.submit_scan(config) # ScanManager сгенерирует ID
             self.log_output.append(f"🚀 Started scan: {self.current_scan_id}")
             self.log_output.append(f"📋 Targets: {', '.join(targets)}")
             self.log_output.append(f"🔧 Type: {self.scan_type_combo.currentText()}\n")
@@ -249,11 +250,7 @@ class ScanLauncherTab(QWidget):
         scan_id = data.get('scan_id')
         results = data.get('results')
         
-        # Теперь мы проверяем статус в объекте results, который мы получаем из ScanManager.
-        # Если results=None, то это была ошибка или остановка до получения результата.
-        
         if scan_id == self.current_scan_id:
-            # Проверяем, что результаты существуют и статус "completed" (или другой успешный статус)
             if results and results.status == "completed":
                 self.log_output.append(f"✅ Scan {scan_id} completed successfully!")
                 self.log_output.append(f"📊 Found {len(results.hosts)} host(s)")
@@ -264,38 +261,35 @@ class ScanLauncherTab(QWidget):
                     
                     self.log_output.append(f"  • Host: {host.ip} ({hostname}) - State: {host.state}")
 
-                    # --- НОВЫЙ ВЫВОД ДЛЯ СЕРВИСОВ И ОС ---
-                    
-                    # 1. ОС (OS)
+                    # --- ВЫВОД ОС ---
+                    # Используем правильные атрибуты из модели данных
                     if hasattr(host, 'os_family') and host.os_family and host.os_family != "unknown":
                         self.log_output.append(f"    OS: {host.os_family}")
-                        if hasattr(host, 'os_details') and host.os_details:
-                            self.log_output.append(f"    OS Details: {host.os_details}")
+                    elif hasattr(host, 'os') and host.os and host.os != "unknown":
+                        self.log_output.append(f"    OS: {host.os}")
                         
-                    # 2. Открытые порты и Сервисы (Service Version)
+                    # --- ВЫВОД ПОРТОВ И СЕРВИСОВ ---
                     if open_ports:
                         self.log_output.append(f"    {len(open_ports)} Open Port(s):")
                         for port in open_ports:
-                            # Вывод версии сервиса
-                            service_info = f"{port.version}" if port.version else "N/A"
-                            service_name = f"{port.service}" if port.service else "unknown"
+                            # Используем правильные атрибуты из модели PortInfo
+                            service_info = f"{port.version}" if hasattr(port, 'version') and port.version else "N/A"
+                            service_name = f"{port.service}" if hasattr(port, 'service') and port.service else "unknown"
                             
                             self.log_output.append(
                                 f"      - {port.port}/{port.protocol} | Service: {service_name} | Version: {service_info}"
                             )
                     
-                    # 3. Скрипты и дополнительная информация
+                    # --- ВЫВОД СКРИПТОВ ---
                     if hasattr(host, 'scripts') and host.scripts:
                         self.log_output.append(f"    📝 Scripts found: {len(host.scripts)}")
                         for script_id, script_output in host.scripts.items():
-                            # Показываем только первые 100 символов вывода скрипта
                             short_output = script_output[:100] + "..." if len(script_output) > 100 else script_output
                             self.log_output.append(f"      - {script_id}: {short_output}")
                     
-                    # 4. Разделитель между хостами
+                    # Разделитель между хостами
                     self.log_output.append("")
-                    # -------------------------------------
-                         
+                    
             else:
                 # Этот блок срабатывает, если статус не "completed" (т.е. stopped, error и т.д.)
                 self.log_output.append(f"❌ Scan {scan_id} failed or was terminated.")
@@ -306,7 +300,7 @@ class ScanLauncherTab(QWidget):
                     pass 
          
             self.log_output.append("")  # Пустая строка для разделения
-            self._reset_ui() # <--- Сброс UI-кнопок
+            self._reset_ui()
 
 
 def create_tab(event_bus: EventBus, core_modules) -> QWidget:
