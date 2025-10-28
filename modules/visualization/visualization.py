@@ -316,22 +316,41 @@ class GraphView(QGraphicsView):
         self.render_graph()
 
 def create_tab(event_bus: EventBus, dependencies: dict = None):
-    return VisualizationTab(event_bus, dependencies)
+    """Функция для создания вкладки визуализации"""
+    print(f"🟣 [Visualization] create_tab called")
+    try:
+        tab = VisualizationTab(event_bus, dependencies)
+        print(f"🟣 [Visualization] create_tab completed successfully")
+        return tab
+    except Exception as e:
+        print(f"🟣 [Visualization] ERROR in create_tab: {e}")
+        # Возвращаем заглушку в случае ошибки
+        from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
+        error_widget = QWidget()
+        layout = QVBoxLayout(error_widget)
+        error_label = QLabel(f"Failed to load Visualization: {e}")
+        layout.addWidget(error_label)
+        return error_widget
 
 class VisualizationTab(BaseTabModule):
     
     def __init__(self, event_bus: EventBus, dependencies: dict = None):
-        super().__init__(event_bus, dependencies)
         print(f"🟣 [Visualization] __init__ started")
+        # Явно инициализируем все атрибуты ДО вызова методов
         self.current_results = None
         self.graph_view = None
         self.status_label = None
         self._is_initialized = False
+        
+        super().__init__(event_bus, dependencies)
         print(f"🟣 [Visualization] __init__ completed - current_results: {self.current_results}")
 
     def _setup_event_handlers(self):
         """Настройка обработчиков событий"""
         print(f"🟣 [Visualization] _setup_event_handlers")
+        # Убедимся, что current_results инициализирован
+        if not hasattr(self, 'current_results'):
+            self.current_results = None
         self.event_bus.results_updated.connect(self._on_results_updated)
         self.event_bus.scan_completed.connect(self._on_scan_completed)
 
