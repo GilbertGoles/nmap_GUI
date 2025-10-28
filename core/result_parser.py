@@ -80,13 +80,14 @@ class NmapResultParser:
             pass
     
     def _parse_host(self, host_element: ET.Element) -> Optional[HostInfo]:
-        """Парсит информацию о хосте"""
+        """Парсит информацию о хосте - УЛУЧШЕННАЯ ВЕРСИЯ"""
         try:
             # IP адрес
             address_element = host_element.find(".//address[@addrtype='ipv4']")
             if address_element is None:
                 address_element = host_element.find(".//address[@addrtype='ipv6']")
             if address_element is None:
+                self.logger.warning("No IP address found for host")
                 return None
                 
             ip = address_element.get('addr')
@@ -95,27 +96,30 @@ class NmapResultParser:
             
             host_info = HostInfo(ip=ip)
             
-            # Hostname
+            # Hostname - ИСПРАВЛЕННЫЙ ПАРСИНГ
             hostnames_element = host_element.find('hostnames')
             if hostnames_element is not None:
+                hostnames = []
                 for hostname_element in hostnames_element.findall('hostname'):
-                    if hostname_element.get('type') == 'user':
-                        host_info.hostname = hostname_element.get('name')
-                        break
-                    elif not host_info.hostname:
-                        host_info.hostname = hostname_element.get('name')
+                    hostname = hostname_element.get('name', '').strip()
+                    if hostname:
+                        hostnames.append(hostname)
+                
+                if hostnames:
+                    host_info.hostname = hostnames[0]  # Берем первый хостнейм
             
             # Состояние хоста
             status_element = host_element.find('status')
             if status_element is not None:
                 host_info.state = status_element.get('state', 'unknown')
             
-            # Парсим порты
+            # Парсим порты - ВАЖНО: проверяем наличие открытых портов
             ports_element = host_element.find('ports')
             if ports_element is not None:
                 host_info.ports = self._parse_ports(ports_element)
+                self.logger.info(f"Found {len(host_info.ports)} ports for host {ip}")
             
-            # Парсим информацию об ОС
+            # Парсим информацию об ОС - УЛУЧШЕННЫЙ ПАРСИНГ
             os_element = host_element.find('os')
             if os_element is not None:
                 self._parse_os_info(os_element, host_info)
@@ -125,6 +129,7 @@ class NmapResultParser:
             if hostscript_element is not None:
                 self._parse_host_scripts(hostscript_element, host_info)
             
+            self.logger.info(f"Parsed host {ip}: {len(host_info.ports)} ports, OS: {host_info.os_family}")
             return host_info
             
         except Exception as e:
@@ -188,26 +193,38 @@ class NmapResultParser:
         return ports
     
     def _parse_os_info(self, os_element: ET.Element, host_info: HostInfo):
-        """Парсит информацию об операционной системе"""
+        """Парсит информацию об операционной системе - УЛУЧШЕННАЯ ВЕРСИЯ"""
         try:
-            # Берем наиболее вероятное совпадение ОС
-            os_match = os_element.find('osmatch')
-            if os_match is not None:
-                os_name = os_match.get('name', '')
-                accuracy = os_match.get('accuracy', '0')
-                
+            # Ищем наиболее точное совпадение ОС
+            best_match = None
+            highest_accuracy = 0
+            
+            for os_match in os_element.findall('osmatch'):
+                accuracy_str = os_match.get('accuracy', '0')
+                try:
+                    accuracy = int(accuracy_str)
+                    if accuracy > highest_accuracy:
+                        highest_accuracy = accuracy
+                        best_match = os_match
+                except ValueError:
+                    continue
+            
+            if best_match is not None:
+                os_name = best_match.get('name', 'Unknown OS')
                 host_info.os_family = os_name
-                host_info.os_details = f"{os_name} (Accuracy: {accuracy}%)"
+                host_info.os_details = f"{os_name} (Accuracy: {highest_accuracy}%)"
                 
-                # Парсим дополнительную информацию об ОС
-                for os_class in os_match.findall('osclass'):
+                # Дополнительная информация из osclass
+                for os_class in best_match.findall('osclass'):
                     os_family = os_class.get('osfamily', '')
                     os_gen = os_class.get('osgen', '')
+                    vendor = os_class.get('vendor', '')
+                    
                     if os_family and not host_info.os_family:
                         host_info.os_family = os_family
-                    if os_gen and "Generation" not in host_info.os_details:
-                        host_info.os_details += f" {os_gen}"
-        
+                    if vendor and vendor not in host_info.os_details:
+                        host_info.os_details += f" {vendor}"
+            
         except Exception as e:
             self.logger.debug(f"Error parsing OS info: {e}")
     
