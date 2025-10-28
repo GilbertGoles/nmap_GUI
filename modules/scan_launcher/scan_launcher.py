@@ -1,12 +1,12 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QPushButton, 
                              QTextEdit, QHBoxLayout, QGroupBox, QComboBox,
                              QLineEdit, QCheckBox, QProgressBar, QGridLayout,
-                             QMessageBox)
+                             QMessageBox, QFrame)
 from PyQt6.QtCore import Qt, pyqtSlot
 import logging
 
 from core.event_bus import EventBus
-from shared.models.scan_config import ScanConfig, ScanType
+from shared.models.scan_config import ScanConfig, ScanType, ScanIntensity  # ОБНОВЛЕННЫЙ ИМПОРТ
 
 class ScanLauncherTab(QWidget):
     """Вкладка для запуска сканирований"""
@@ -34,35 +34,70 @@ class ScanLauncherTab(QWidget):
         config_group = QGroupBox("Scan Configuration")
         config_layout = QGridLayout(config_group)
         
+        row = 0
+        
         # Цели сканирования
-        config_layout.addWidget(QLabel("Targets:"), 0, 0)
+        config_layout.addWidget(QLabel("Targets:"), row, 0)
         self.targets_input = QLineEdit()
         self.targets_input.setPlaceholderText("e.g., 192.168.1.0/24, scanme.nmap.org, 10.0.0.1-100")
         self.targets_input.setText("scanme.nmap.org")
-        config_layout.addWidget(self.targets_input, 0, 1)
+        config_layout.addWidget(self.targets_input, row, 1)
+        row += 1
         
         # Тип сканирования
-        config_layout.addWidget(QLabel("Scan Type:"), 1, 0)
+        config_layout.addWidget(QLabel("Scan Type:"), row, 0)
         self.scan_type_combo = QComboBox()
         self.scan_type_combo.addItems(["Quick", "Stealth", "Comprehensive", "Discovery", "Custom"])
-        config_layout.addWidget(self.scan_type_combo, 1, 1)
+        config_layout.addWidget(self.scan_type_combo, row, 1)
+        row += 1
+        
+        # УРОВЕНЬ ИНТЕНСИВНОСТИ - НОВЫЙ ЭЛЕМЕНТ
+        config_layout.addWidget(QLabel("Scan Intensity:"), row, 0)
+        self.intensity_combo = QComboBox()
+        self.intensity_combo.addItems([
+            "SAFE - Basic security checks", 
+            "NORMAL - Standard security checks", 
+            "AGGRESSIVE - Advanced vulnerability detection", 
+            "PENETRATION - Full penetration testing"
+        ])
+        self.intensity_combo.setCurrentIndex(0)  # По умолчанию SAFE
+        self.intensity_combo.currentIndexChanged.connect(self._on_intensity_changed)
+        config_layout.addWidget(self.intensity_combo, row, 1)
+        row += 1
+        
+        # Предупреждение об интенсивности
+        self.intensity_warning = QLabel("")
+        self.intensity_warning.setWordWrap(True)
+        self.intensity_warning.setStyleSheet("color: orange; font-weight: bold; padding: 5px;")
+        self.intensity_warning.setVisible(False)
+        config_layout.addWidget(self.intensity_warning, row, 0, 1, 2)
+        row += 1
+        
+        # Разделитель
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        config_layout.addWidget(separator, row, 0, 1, 2)
+        row += 1
         
         # Диапазон портов
-        config_layout.addWidget(QLabel("Port Range:"), 2, 0)
+        config_layout.addWidget(QLabel("Port Range:"), row, 0)
         self.port_range_input = QLineEdit()
         self.port_range_input.setPlaceholderText("e.g., 1-1000, 80,443,22,21")
         self.port_range_input.setText("1-1000")
-        config_layout.addWidget(self.port_range_input, 2, 1)
+        config_layout.addWidget(self.port_range_input, row, 1)
+        row += 1
         
         # Timing template
-        config_layout.addWidget(QLabel("Timing:"), 3, 0)
+        config_layout.addWidget(QLabel("Timing:"), row, 0)
         self.timing_combo = QComboBox()
         self.timing_combo.addItems(["T0 (Paranoid)", "T1 (Sneaky)", "T2 (Polite)", "T3 (Normal)", "T4 (Aggressive)", "T5 (Insane)"])
         self.timing_combo.setCurrentIndex(3)  # T3 Normal
-        config_layout.addWidget(self.timing_combo, 3, 1)
+        config_layout.addWidget(self.timing_combo, row, 1)
+        row += 1
         
         # Дополнительные опции
-        config_layout.addWidget(QLabel("Options:"), 4, 0)
+        config_layout.addWidget(QLabel("Options:"), row, 0)
         options_layout = QHBoxLayout()
         self.service_version_check = QCheckBox("Service Version")
         self.os_detection_check = QCheckBox("OS Detection")
@@ -70,13 +105,14 @@ class ScanLauncherTab(QWidget):
         options_layout.addWidget(self.service_version_check)
         options_layout.addWidget(self.os_detection_check)
         options_layout.addWidget(self.script_scan_check)
-        config_layout.addLayout(options_layout, 4, 1)
+        config_layout.addLayout(options_layout, row, 1)
+        row += 1
         
         # Пользовательская команда
-        config_layout.addWidget(QLabel("Custom Command:"), 5, 0)
+        config_layout.addWidget(QLabel("Custom Command:"), row, 0)
         self.custom_command_input = QLineEdit()
         self.custom_command_input.setPlaceholderText("Custom nmap flags (for custom scan type)")
-        config_layout.addWidget(self.custom_command_input, 5, 1)
+        config_layout.addWidget(self.custom_command_input, row, 1)
         
         main_layout.addWidget(config_group)
         
@@ -111,6 +147,23 @@ class ScanLauncherTab(QWidget):
         log_layout.addWidget(self.log_output)
         
         main_layout.addWidget(log_group)
+    
+    def _on_intensity_changed(self, index):
+        """Обрабатывает изменение уровня интенсивности"""
+        warnings = {
+            0: "",  # SAFE - нет предупреждения
+            1: "⚠️ NORMAL: Standard security checks. Use for routine security assessments.",
+            2: "🚨 AGGRESSIVE: Advanced vulnerability detection. May trigger security systems. Requires client permission.",
+            3: "🔴 PENETRATION: Full penetration testing. Can disrupt services. REQUIRES WRITTEN AUTHORIZATION."
+        }
+        
+        warning_text = warnings.get(index, "")
+        self.intensity_warning.setText(warning_text)
+        self.intensity_warning.setVisible(bool(warning_text))
+        
+        # Автоматически включаем script scan для агрессивных режимов
+        if index >= 2:  # AGGRESSIVE и PENETRATION
+            self.script_scan_check.setChecked(True)
     
     def _connect_signals(self):
         """Подключает сигналы"""
@@ -162,6 +215,24 @@ class ScanLauncherTab(QWidget):
     def _start_scan(self):
         """Запускает сканирование"""
         try:
+            # Проверка уровня интенсивности
+            intensity_index = self.intensity_combo.currentIndex()
+            if intensity_index >= 2:  # AGGRESSIVE или PENETRATION
+                reply = QMessageBox.warning(
+                    self,
+                    "Security Warning",
+                    f"You are about to run an {self.intensity_combo.currentText().split(' - ')[0]} scan.\n\n"
+                    "This may:\n"
+                    "• Trigger intrusion detection systems\n"
+                    "• Disrupt services\n"
+                    "• Be considered aggressive\n\n"
+                    "Do you have proper authorization to proceed?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
+            
             # Получаем параметры из UI
             targets_text = self.targets_input.text().strip()
             if not targets_text:
@@ -179,11 +250,17 @@ class ScanLauncherTab(QWidget):
                 "Custom": ScanType.CUSTOM
             }
             
+            intensity_map = {
+                0: ScanIntensity.SAFE,
+                1: ScanIntensity.NORMAL, 
+                2: ScanIntensity.AGGRESSIVE,
+                3: ScanIntensity.PENETRATION
+            }
+            
             config = ScanConfig(
-                # === ИСПРАВЛЕНИЕ: УДАЛЯЕМ присвоение временного ID ===
-                # ScanManager сам сгенерирует уникальный UUID через ScanJob
                 targets=targets,
                 scan_type=scan_type_map[self.scan_type_combo.currentText()],
+                scan_intensity=intensity_map[intensity_index],  # НОВЫЙ ПАРАМЕТР
                 timing_template=f"T{self.timing_combo.currentIndex()}",
                 port_range=self.port_range_input.text().strip() or None,
                 service_version=self.service_version_check.isChecked(),
@@ -193,10 +270,14 @@ class ScanLauncherTab(QWidget):
             )
             
             # Запускаем сканирование
-            self.current_scan_id = self.scan_manager.submit_scan(config) # ScanManager сгенерирует ID
-            self.log_output.append(f"🚀 Started scan: {self.current_scan_id}")
+            self.current_scan_id = self.scan_manager.submit_scan(config)
+            
+            # Логируем информацию об интенсивности
+            intensity_level = self.intensity_combo.currentText().split(' - ')[0]
+            self.log_output.append(f"🚀 Started {intensity_level} scan: {self.current_scan_id}")
             self.log_output.append(f"📋 Targets: {', '.join(targets)}")
-            self.log_output.append(f"🔧 Type: {self.scan_type_combo.currentText()}\n")
+            self.log_output.append(f"🔧 Type: {self.scan_type_combo.currentText()}")
+            self.log_output.append(f"⚡ Intensity: {intensity_level}\n")
             
             # Обновляем UI
             self.start_btn.setEnabled(False)
@@ -246,7 +327,7 @@ class ScanLauncherTab(QWidget):
     
     @pyqtSlot(dict)
     def _on_scan_completed(self, data):
-        """Обрабатывает завершение сканирования - С ДЕТАЛЬНОЙ ОТЛАДКОЙ"""
+        """Обрабатывает завершение сканирования"""
         scan_id = data.get('scan_id')
         results = data.get('results')
         
@@ -260,19 +341,6 @@ class ScanLauncherTab(QWidget):
                     self.log_output.append("💡 Debug info: Check if targets are reachable")
                 
                 for host in results.hosts:
-                    # ОТЛАДОЧНАЯ ИНФОРМАЦИЯ
-                    self.log_output.append(f"🔍 DEBUG: Host {host.ip} has {len(host.ports)} total ports")
-                    
-                    open_ports = [port for port in host.ports if port.state == 'open']
-                    filtered_ports = [port for port in host.ports if port.state == 'filtered']
-                    closed_ports = [port for port in host.ports if port.state == 'closed']
-                    
-                    self.log_output.append(f"🔍 DEBUG: Open: {len(open_ports)}, Filtered: {len(filtered_ports)}, Closed: {len(closed_ports)}")
-                    
-                    # Вывод всех состояний портов для отладки
-                    for port in host.ports:
-                        self.log_output.append(f"🔍 DEBUG: Port {port.port}/{port.protocol} - State: {port.state}")
-                    
                     hostname = host.hostname if host.hostname else "N/A"
                     
                     self.log_output.append(f"  • Host: {host.ip} ({hostname}) - State: {host.state}")
@@ -284,6 +352,7 @@ class ScanLauncherTab(QWidget):
                         self.log_output.append(f"    OS: Could not determine")
                     
                     # Вывод портов
+                    open_ports = [p for p in host.ports if p.state == "open"]
                     if open_ports:
                         self.log_output.append(f"    {len(open_ports)} Open Port(s):")
                         for port in open_ports:
