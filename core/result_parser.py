@@ -138,7 +138,7 @@ class NmapResultParser:
             return None
     
     def _parse_ports(self, ports_element: ET.Element) -> List[PortInfo]:
-        """Парсит информацию о портах - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
+        """Парсит информацию о портах - УЛУЧШЕННАЯ ВЕРСИЯ"""
         ports = []
         
         for port_element in ports_element.findall('port'):
@@ -158,17 +158,13 @@ class NmapResultParser:
                 if state_element is not None:
                     state = state_element.get('state', 'unknown')
                 
-                port_info = PortInfo(
-                    port=int(port_id),
-                    protocol=protocol,
-                    state=state,  # Используем исправленное состояние
-                    service=service_element.get('name', 'unknown') if service_element else 'unknown',
-                    version=service_element.get('product', '') if service_element else '',
-                    reason=state_element.get('reason', '') if state_element else ''
-                )
+                # УЛУЧШАЕМ ОПРЕДЕЛЕНИЕ СЕРВИСА
+                service_name = "unknown"
+                service_version = ""
                 
-                # Добавляем версию сервиса если есть
                 if service_element is not None:
+                    service_name = service_element.get('name', 'unknown')
+                    # Собираем информацию о версии
                     version_parts = []
                     if service_element.get('product'):
                         version_parts.append(service_element.get('product'))
@@ -177,7 +173,20 @@ class NmapResultParser:
                     if service_element.get('extrainfo'):
                         version_parts.append(service_element.get('extrainfo'))
                     
-                    port_info.version = ' '.join(version_parts)
+                    service_version = ' '.join(version_parts)
+                    
+                    # Если сервис unknown, но есть product, используем product как имя сервиса
+                    if service_name == "unknown" and service_element.get('product'):
+                        service_name = service_element.get('product')
+                
+                port_info = PortInfo(
+                    port=int(port_id),
+                    protocol=protocol,
+                    state=state,  # Используем исправленное состояние
+                    service=service_name,
+                    version=service_version,
+                    reason=state_element.get('reason', '') if state_element else ''
+                )
                 
                 # Парсим скрипты nmap для порта - ВАЖНО ДЛЯ УЯЗВИМОСТЕЙ
                 port_scripts = {}
@@ -195,7 +204,7 @@ class NmapResultParser:
                 ports.append(port_info)
                 
                 # ДЕБАГ ЛОГИРОВАНИЕ
-                self.logger.debug(f"Parsed port: {port_id}/{protocol} - State: {state}")
+                self.logger.debug(f"Parsed port: {port_id}/{protocol} - State: {state}, Service: {service_name}, Version: {service_version}")
                 
             except Exception as e:
                 self.logger.error(f"Error parsing port {port_id}: {e}")
