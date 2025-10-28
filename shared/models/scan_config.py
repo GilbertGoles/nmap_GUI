@@ -13,9 +13,9 @@ class ScanType(Enum):
 @dataclass
 class ScanConfig:
     """Конфигурация сканирования NMAP"""
-    scan_id: str
     targets: List[str]
     scan_type: ScanType = ScanType.QUICK
+    scan_id: Optional[str] = None  # ✅ Сделать опциональным
     custom_command: str = ""
     threads: int = 4
     timing_template: str = "T4"
@@ -36,17 +36,15 @@ class ScanConfig:
         if self.threads and self.threads > 1:
             cmd_parts.append(f"--min-parallelism {self.threads}")
         
-        # Тип сканирования - ИСПРАВЛЕННАЯ ВЕРСИЯ!
+        # Тип сканирования
         if self.scan_type == ScanType.QUICK:
             cmd_parts.append("-F")
-            # Для quick сканирования игнорируем указанные порты
         elif self.scan_type == ScanType.STEALTH:
             cmd_parts.append("-sS")
         elif self.scan_type == ScanType.COMPREHENSIVE:
             cmd_parts.extend(["-sS", "-sV", "-O", "-A"])
         elif self.scan_type == ScanType.DISCOVERY:
             cmd_parts.append("-sn")
-            # Для discovery сканирования игнорируем порты
         
         # Дополнительные опции (игнорируем для quick и discovery сканирования)
         if self.scan_type not in [ScanType.QUICK, ScanType.DISCOVERY]:
