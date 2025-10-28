@@ -224,16 +224,19 @@ class ScanManager:
             self.event_bus.scan_resumed.emit({'scan_id': scan_id})
     
     def stop_scan(self, scan_id: str):
-        """Останавливает сканирование"""
+        """Останавливает сканирование - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
         if scan_id in self.active_scans:
             job = self.active_scans[scan_id]
             job.status = ScanStatus.STOPPED
             
-            # Останавливаем в движке ПЕРВЫМ ДЕЛОМ
-            self.nmap_engine.stop_scan(scan_id)
+            # ДОБАВЛЯЕМ ПРОВЕРКУ НА None и валидность scan_id
+            if scan_id and scan_id != "None" and scan_id != "":
+                # Останавливаем в движке
+                self.nmap_engine.stop_scan(scan_id)
             
-            # Удаляем из активных НЕМЕДЛЕННО
-            del self.active_scans[scan_id]
+            # Удаляем из активных
+            if scan_id in self.active_scans:
+                del self.active_scans[scan_id]
             
             # Публикуем события
             self.event_bus.scan_stopped.emit({'scan_id': scan_id})
