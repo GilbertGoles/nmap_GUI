@@ -322,16 +322,22 @@ class VisualizationTab(BaseTabModule):
     
     def __init__(self, event_bus: EventBus, dependencies: dict = None):
         super().__init__(event_bus, dependencies)
+        print(f"🟣 [Visualization] __init__ started")
         self.current_results = None
+        self.graph_view = None
+        self.status_label = None
         self._is_initialized = False
-        
+        print(f"🟣 [Visualization] __init__ completed - current_results: {self.current_results}")
+
     def _setup_event_handlers(self):
         """Настройка обработчиков событий"""
+        print(f"🟣 [Visualization] _setup_event_handlers")
         self.event_bus.results_updated.connect(self._on_results_updated)
         self.event_bus.scan_completed.connect(self._on_scan_completed)
-    
+
     def _create_ui(self):
         """Создает UI компонент визуализации"""
+        print(f"🟣 [Visualization] _create_ui started")
         layout = QVBoxLayout(self)
         
         # Панель управления
@@ -354,11 +360,15 @@ class VisualizationTab(BaseTabModule):
         layout.addWidget(self.status_label)
         
         self._is_initialized = True
+        print(f"🟣 [Visualization] _create_ui completed - is_initialized: {self._is_initialized}")
         
         # Если уже есть результаты, отображаем их
         if self.current_results:
+            print(f"🟣 [Visualization] Building graph from existing results")
             self._build_graph_from_results(self.current_results)
-    
+        else:
+            print(f"🟣 [Visualization] No current results available")
+
     def _create_control_panel(self) -> QGroupBox:
         """Создает панель управления визуализацией"""
         group = QGroupBox("Visualization Control")
@@ -391,6 +401,7 @@ class VisualizationTab(BaseTabModule):
     
     def _create_graph_widget(self) -> QGroupBox:
         """Создает виджет графа"""
+        print(f"🟣 [Visualization] _create_graph_widget")
         group = QGroupBox("Network Graph")
         layout = QVBoxLayout(group)
         
@@ -532,6 +543,10 @@ class VisualizationTab(BaseTabModule):
             self.status_label.setText("No valid results to visualize")
             return
         
+        if not hasattr(self, 'graph_view') or not self.graph_view:
+            print(f"🟣 [Visualization] Graph view not available")
+            return
+            
         self.graph_view.clear_graph()
         
         host_count = 0
@@ -586,7 +601,7 @@ class VisualizationTab(BaseTabModule):
     
     def _apply_layout(self):
         """Применяет выбранный layout"""
-        if not self.graph_view.nodes:
+        if not hasattr(self, 'graph_view') or not self.graph_view or not self.graph_view.nodes:
             return
         
         layout_type = self.layout_combo.currentText()
@@ -602,6 +617,9 @@ class VisualizationTab(BaseTabModule):
     
     def _apply_circular_layout(self):
         """Применяет круговой layout"""
+        if not hasattr(self, 'graph_view') or not self.graph_view:
+            return
+            
         nodes = list(self.graph_view.nodes.values())
         radius = 200
         angle_step = 2 * math.pi / len(nodes)
@@ -617,6 +635,9 @@ class VisualizationTab(BaseTabModule):
     
     def _apply_grid_layout(self):
         """Применяет grid layout"""
+        if not hasattr(self, 'graph_view') or not self.graph_view:
+            return
+            
         nodes = list(self.graph_view.nodes.values())
         cols = math.ceil(math.sqrt(len(nodes)))
         spacing = 100
@@ -633,6 +654,9 @@ class VisualizationTab(BaseTabModule):
     
     def _apply_hierarchical_layout(self):
         """Применяет иерархический layout"""
+        if not hasattr(self, 'graph_view') or not self.graph_view:
+            return
+            
         # Простая иерархия: хосты на одном уровне, сервисы на другом
         hosts = [n for n in self.graph_view.nodes.values() if n.type == NodeType.HOST]
         services = [n for n in self.graph_view.nodes.values() if n.type == NodeType.SERVICE]
@@ -663,40 +687,52 @@ class VisualizationTab(BaseTabModule):
     
     def _zoom_in(self):
         """Увеличивает масштаб"""
-        self.graph_view.zoom_in()
+        if hasattr(self, 'graph_view') and self.graph_view:
+            self.graph_view.zoom_in()
     
     def _zoom_out(self):
         """Уменьшает масштаб"""
-        self.graph_view.zoom_out()
+        if hasattr(self, 'graph_view') and self.graph_view:
+            self.graph_view.zoom_out()
     
     def _reset_view(self):
         """Сбрасывает вид"""
-        self.graph_view.reset_zoom()
+        if hasattr(self, 'graph_view') and self.graph_view:
+            self.graph_view.reset_zoom()
     
     def _on_display_settings_changed(self):
         """Обрабатывает изменение настроек отображения"""
-        self.graph_view.show_labels = self.show_labels_check.isChecked()
-        self.graph_view.show_connections = self.show_connections_check.isChecked()
-        self.graph_view.render_graph()
+        if hasattr(self, 'graph_view') and self.graph_view:
+            self.graph_view.show_labels = self.show_labels_check.isChecked()
+            self.graph_view.show_connections = self.show_connections_check.isChecked()
+            self.graph_view.render_graph()
     
     def _on_heat_map_toggled(self, checked: bool):
         """Обрабатывает включение/выключение heat map"""
-        if not self.current_results:
+        if not hasattr(self, 'current_results') or self.current_results is None:
+            print(f"🟣 [Visualization] _on_heat_map_toggled - current_results not available")
             return
         
+        print(f"🟣 [Visualization] _on_heat_map_toggled - current_results available")
         if checked:
             self._apply_heat_map()
         else:
             # Восстанавливаем стандартные цвета
-            for node in self.graph_view.nodes.values():
-                node._setup_appearance()
-            self.graph_view.render_graph()
+            if hasattr(self, 'graph_view') and self.graph_view:
+                for node in self.graph_view.nodes.values():
+                    node._setup_appearance()
+                self.graph_view.render_graph()
     
     def _apply_heat_map(self):
         """Применяет heat map на основе количества открытых портов"""
-        if not self.current_results:
+        if not hasattr(self, 'current_results') or self.current_results is None:
+            print(f"🟣 [Visualization] _apply_heat_map - current_results not available")
             return
         
+        if not hasattr(self, 'graph_view') or not self.graph_view:
+            return
+            
+        print(f"🟣 [Visualization] _apply_heat_map - current_results available")
         # Находим максимальное количество портов для нормализации
         max_ports = 0
         for host in self.current_results.hosts:
@@ -723,6 +759,11 @@ class VisualizationTab(BaseTabModule):
     
     def _on_node_size_changed(self, value: int):
         """Обрабатывает изменение размера узлов"""
+        if not hasattr(self, 'graph_view') or not self.graph_view:
+            print(f"🟣 [Visualization] _on_node_size_changed - graph_view not available")
+            return
+            
+        print(f"🟣 [Visualization] _on_node_size_changed")
         for node in self.graph_view.nodes.values():
             # Сохраняем пропорции по типу
             if node.type == NodeType.HOST:
@@ -735,9 +776,14 @@ class VisualizationTab(BaseTabModule):
                 node.size = value - 10
         
         self.graph_view.render_graph()
-    
+
     def _on_layers_changed(self):
         """Обрабатывает изменение видимости слоев"""
+        if not hasattr(self, 'current_results') or self.current_results is None:
+            print(f"🟣 [Visualization] _on_layers_changed - current_results not available")
+            return
+            
+        print(f"🟣 [Visualization] _on_layers_changed - rebuilding graph")
         # В этой версии просто перестраиваем граф
         if self.current_results:
             self._build_graph_from_results(self.current_results)
