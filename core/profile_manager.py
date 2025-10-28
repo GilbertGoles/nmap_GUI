@@ -6,7 +6,7 @@ from enum import Enum
 from dataclasses import dataclass, asdict
 
 from core.event_bus import EventBus
-from shared.models.scan_config import ScanConfig, ScanType
+from shared.models.scan_config import ScanConfig, ScanType, ScanIntensity  # ОБНОВЛЕННЫЙ ИМПОРТ
 
 @dataclass
 class ScanProfile:
@@ -14,6 +14,7 @@ class ScanProfile:
     name: str
     description: str
     scan_type: ScanType
+    scan_intensity: ScanIntensity  # НОВОЕ ПОЛЕ
     options: Dict
     custom_command: str = ""
     category: str = "Custom"
@@ -57,9 +58,10 @@ class ProfileManager:
         """Создает стандартные профили сканирования"""
         default_profiles = [
             ScanProfile(
-                name="Quick Scan",
-                description="Fast port scan of common ports",
+                name="Quick Safe Scan",
+                description="Fast port scan of common ports (safe mode)",
                 scan_type=ScanType.QUICK,
+                scan_intensity=ScanIntensity.SAFE,
                 category=ProfileCategory.QUICK.value,
                 options={
                     "port_range": "1-1000",
@@ -68,20 +70,24 @@ class ProfileManager:
                 }
             ),
             ScanProfile(
-                name="Stealth SYN Scan",
-                description="Stealth SYN scan without completing TCP handshake",
+                name="Stealth Security Scan",
+                description="Stealth SYN scan with security checks",
                 scan_type=ScanType.STEALTH,
+                scan_intensity=ScanIntensity.NORMAL,
                 category=ProfileCategory.STEALTH.value,
                 options={
                     "port_range": "1-1000",
                     "timing_template": "T2",
-                    "threads": 2
+                    "threads": 2,
+                    "service_version": True,
+                    "script_scan": True
                 }
             ),
             ScanProfile(
-                name="Comprehensive Scan",
-                description="Full scan with OS detection, version detection and scripts",
+                name="Comprehensive Security Assessment",
+                description="Full security assessment with vulnerability detection",
                 scan_type=ScanType.COMPREHENSIVE,
+                scan_intensity=ScanIntensity.AGGRESSIVE,
                 category=ProfileCategory.COMPREHENSIVE.value,
                 options={
                     "port_range": "1-65535",
@@ -93,9 +99,25 @@ class ProfileManager:
                 }
             ),
             ScanProfile(
+                name="Penetration Test Scan",
+                description="Full penetration testing scan (requires authorization)",
+                scan_type=ScanType.COMPREHENSIVE,
+                scan_intensity=ScanIntensity.PENETRATION,
+                category=ProfileCategory.VULNERABILITY.value,
+                options={
+                    "port_range": "1-65535",
+                    "timing_template": "T4",
+                    "service_version": True,
+                    "os_detection": True,
+                    "script_scan": True
+                },
+                custom_command="nmap -sS -sV -O -A --script vuln,exploit -T4"
+            ),
+            ScanProfile(
                 name="Service Detection",
                 description="Detect service versions on open ports",
                 scan_type=ScanType.CUSTOM,
+                scan_intensity=ScanIntensity.NORMAL,
                 category=ProfileCategory.SERVICE.value,
                 options={
                     "port_range": "1-10000",
@@ -109,6 +131,7 @@ class ProfileManager:
                 name="OS Detection",
                 description="Detect operating systems of targets",
                 scan_type=ScanType.CUSTOM,
+                scan_intensity=ScanIntensity.SAFE,
                 category=ProfileCategory.OS_DETECTION.value,
                 options={
                     "port_range": "1-1000",
@@ -121,6 +144,7 @@ class ProfileManager:
                 name="Vulnerability Scan",
                 description="Run vulnerability detection scripts",
                 scan_type=ScanType.CUSTOM,
+                scan_intensity=ScanIntensity.AGGRESSIVE,
                 category=ProfileCategory.VULNERABILITY.value,
                 options={
                     "port_range": "1-10000",
@@ -134,6 +158,7 @@ class ProfileManager:
                 name="Full TCP Connect",
                 description="Complete TCP connection scan",
                 scan_type=ScanType.CUSTOM,
+                scan_intensity=ScanIntensity.SAFE,
                 category=ProfileCategory.CUSTOM.value,
                 options={
                     "port_range": "1-1000",
@@ -143,15 +168,16 @@ class ProfileManager:
                 custom_command="nmap -sT -T3"
             ),
             ScanProfile(
-                name="UDP Scan",
-                description="Scan common UDP ports",
+                name="UDP Security Scan",
+                description="Scan common UDP ports with security checks",
                 scan_type=ScanType.CUSTOM,
+                scan_intensity=ScanIntensity.NORMAL,
                 category=ProfileCategory.CUSTOM.value,
                 options={
                     "port_range": "53,67,68,69,123,135,137,138,139,161,162,445,514,520,631,1434,1900,4500,49152",
                     "timing_template": "T2"
                 },
-                custom_command="nmap -sU -T2"
+                custom_command="nmap -sU -sV --script safe -T2"
             )
         ]
         
@@ -168,6 +194,7 @@ class ProfileManager:
             name=name,
             description=description,
             scan_type=config.scan_type,
+            scan_intensity=config.scan_intensity,  # НОВОЕ ПОЛЕ
             category=category,
             custom_command=config.custom_command,
             options={
@@ -241,6 +268,7 @@ class ProfileManager:
         
         # Обновляем конфигурацию
         config.scan_type = profile.scan_type
+        config.scan_intensity = profile.scan_intensity  # НОВОЕ ПОЛЕ
         config.custom_command = profile.custom_command
         
         # Применяем опции
@@ -262,6 +290,7 @@ class ProfileManager:
                 profiles_data[name] = {
                     "description": profile.description,
                     "scan_type": profile.scan_type.value,
+                    "scan_intensity": profile.scan_intensity.value,  # НОВОЕ ПОЛЕ
                     "category": profile.category,
                     "custom_command": profile.custom_command,
                     "options": profile.options
@@ -290,6 +319,7 @@ class ProfileManager:
                         name=name,
                         description=data.get("description", ""),
                         scan_type=ScanType(data.get("scan_type", "custom")),
+                        scan_intensity=ScanIntensity(data.get("scan_intensity", "safe")),  # НОВОЕ ПОЛЕ
                         category=data.get("category", "Custom"),
                         custom_command=data.get("custom_command", ""),
                         options=data.get("options", {})
@@ -322,10 +352,14 @@ class ProfileManager:
             
             for name, data in profiles_data.items():
                 try:
+                    # Обработка старых профилей без scan_intensity
+                    scan_intensity = ScanIntensity(data.get("scan_intensity", "safe"))
+                    
                     profile = ScanProfile(
                         name=name,
                         description=data.get("description", ""),
                         scan_type=ScanType(data.get("scan_type", "custom")),
+                        scan_intensity=scan_intensity,
                         category=data.get("category", "Custom"),
                         custom_command=data.get("custom_command", ""),
                         options=data.get("options", {})
@@ -350,6 +384,7 @@ class ProfileManager:
                 profiles_data[name] = {
                     "description": profile.description,
                     "scan_type": profile.scan_type.value,
+                    "scan_intensity": profile.scan_intensity.value,  # НОВОЕ ПОЛЕ
                     "category": profile.category,
                     "custom_command": profile.custom_command,
                     "options": profile.options
@@ -373,16 +408,16 @@ class ProfileManager:
         if target_count > 100:
             # Для большого количества целей используем быстрые сканирования
             if scan_type == "comprehensive":
-                return self.get_profile("Quick Scan")
+                return self.get_profile("Quick Safe Scan")
             else:
-                return self.get_profile("Stealth SYN Scan")
+                return self.get_profile("Stealth Security Scan")
         else:
             # Для малого количества целей можно использовать детальные сканирования
             if scan_type == "comprehensive":
-                return self.get_profile("Comprehensive Scan")
+                return self.get_profile("Comprehensive Security Assessment")
             elif scan_type == "vulnerability":
                 return self.get_profile("Vulnerability Scan")
             elif scan_type == "service":
                 return self.get_profile("Service Detection")
             else:
-                return self.get_profile("Quick Scan")
+                return self.get_profile("Quick Safe Scan")
