@@ -85,19 +85,25 @@ class ScanManager:
                 continue
     
     def _execute_scan(self, job: ScanJob):
-        """Выполняет сканирование через nmap движок - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
+        """Выполняет сканирование через nmap движок"""
         try:
-            # === ВАЖНОЕ ИСПРАВЛЕНИЕ: Сохраняем оригинальный scan_id из конфигурации ===
+            # Сохраняем оригинальный scan_id
             original_scan_id = job.config.scan_id
-            # Временно устанавливаем ID из job для корректного отслеживания
             job.config.scan_id = job.id
             
             job.status = ScanStatus.RUNNING
             
+            # УВЕДОМЛЯЕМ О НАЧАЛЕ СКАНИРОВАНИЯ
+            self.event_bus.scan_progress.emit({
+                'scan_id': job.id,
+                'progress': 0,
+                'status': 'Starting scan...'
+            })
+            
             # Выполняем реальное сканирование
             job.result = self.nmap_engine.execute_scan(job.config)
             
-            # === ВОССТАНАВЛИВАЕМ оригинальный ID в результатах ===
+            # Восстанавливаем оригинальный ID
             if job.result:
                 job.result.scan_id = original_scan_id or job.id
                 
@@ -106,9 +112,16 @@ class ScanManager:
                 job.status = ScanStatus.COMPLETED
                 job.progress = 100
                 
+                # ФИНАЛЬНЫЙ ПРОГРЕСС
+                self.event_bus.scan_progress.emit({
+                    'scan_id': job.id,
+                    'progress': 100,
+                    'status': 'Scan completed successfully'
+                })
+                
                 # Публикуем завершение сканирования
                 self.event_bus.scan_completed.emit({
-                    'scan_id': job.id,  # Используем job.id для consistency
+                    'scan_id': job.id,
                     'results': job.result,
                     'status': ScanStatus.COMPLETED.value
                 })
@@ -127,7 +140,7 @@ class ScanManager:
             self.event_bus.scan_progress.emit({
                 'scan_id': job.id,
                 'progress': 0,
-                'status': f'error: {e}'
+                'status': f'Error: {e}'
             })
             
             # Публикуем ошибку как обновление результатов
