@@ -12,7 +12,14 @@ class NmapResultParser:
     _instance = None
     
     @classmethod
-    def get_instance(cls):
+    def get_instance(cls, *args, **kwargs):
+        """
+        Возвращает единственный экземпляр класса (Singleton)
+        
+        Args:
+            *args: Позиционные аргументы (игнорируются для совместимости)
+            **kwargs: Именованные аргументы (игнорируются для совместимости)
+        """
         if cls._instance is None:
             cls._instance = NmapResultParser()
         return cls._instance
@@ -23,6 +30,13 @@ class NmapResultParser:
     def parse_xml(self, xml_content: str, scan_config: ScanConfig) -> ScanResult:
         """
         Парсит XML вывод nmap и возвращает структурированные результаты
+        
+        Args:
+            xml_content: XML строка с результатами nmap
+            scan_config: Конфигурация сканирования
+            
+        Returns:
+            ScanResult: Структурированные результаты сканирования
         """
         try:
             root = ET.fromstring(xml_content)
