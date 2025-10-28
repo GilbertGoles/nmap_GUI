@@ -97,27 +97,28 @@ class VulnerabilityDetailsDialog(QDialog):
             self.text_edit.setText("No vulnerabilities found")
             return
         
-        html_content = """<html>
-<head>
-<style>
-body { font-family: Arial, sans-serif; margin: 20px; }
-.vuln { margin: 10px 0; padding: 10px; border-left: 4px solid #f44336; background: #ffeaea; }
-.critical { border-color: #d32f2f; background: #ffcdd2; }
-.high { border-color: #f44336; background: #ffeaea; }
-.medium { border-color: #ff9800; background: #fff3e0; }
-.low { border-color: #4caf50; background: #e8f5e8; }
-.risk { font-weight: bold; padding: 2px 8px; border-radius: 3px; }
-.risk-critical { background: #d32f2f; color: white; }
-.risk-high { background: #f44336; color: white; }
-.risk-medium { background: #ff9800; color: white; }
-.risk-low { background: #4caf50; color: white; }
-.cve { background: #e3f2fd; border-left: 4px solid #2196f3; }
-.cve-id { font-family: monospace; font-weight: bold; color: #1976d2; }
-</style>
-</head>
-<body>
-<h2>Found Vulnerabilities: {count}</h2>
-""".format(count=len(vulnerabilities))
+        html_content = """
+    <html>
+    <head>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 20px; }
+            .vuln { margin: 10px 0; padding: 10px; border-left: 4px solid #f44336; background: #ffeaea; }
+            .critical { border-color: #d32f2f; background: #ffcdd2; }
+            .high { border-color: #f44336; background: #ffeaea; }
+            .medium { border-color: #ff9800; background: #fff3e0; }
+            .low { border-color: #4caf50; background: #e8f5e8; }
+            .risk { font-weight: bold; padding: 2px 8px; border-radius: 3px; }
+            .risk-critical { background: #d32f2f; color: white; }
+            .risk-high { background: #f44336; color: white; }
+            .risk-medium { background: #ff9800; color: white; }
+            .risk-low { background: #4caf50; color: white; }
+            .cve { background: #e3f2fd; border-left: 4px solid #2196f3; }
+            .cve-id { font-family: monospace; font-weight: bold; color: #1976d2; }
+        </style>
+    </head>
+    <body>
+        <h2>Found Vulnerabilities: {count}</h2>
+    """.format(count=len(vulnerabilities))
         
         for i, vuln in enumerate(vulnerabilities, 1):
             risk = vuln.get('risk', 'low').lower()
@@ -129,25 +130,25 @@ body { font-family: Arial, sans-serif; margin: 20px; }
                 vuln_class = 'cve'
             
             html_content += f"""
-<div class="vuln {vuln_class}">
-    <h3>"""
-            
+        <div class="vuln {vuln_class}">
+            <h3>"""
+        
             # Добавляем CVE ID если есть
             if vuln.get('type') == 'CVE':
                 html_content += f"""<span class="cve-id">{vuln.get('id', 'Unknown CVE')}</span> - """
             
             html_content += f"""Vulnerability #{i} <span class="risk {risk_class}">{vuln.get('risk', 'UNKNOWN')}</span></h3>
-    <p><strong>Service:</strong> {vuln.get('service', 'Unknown')}</p>
-    <p><strong>Port:</strong> {vuln.get('port', 'Unknown')}</p>
-    <p><strong>Version:</strong> {vuln.get('version', 'Unknown')}</p>"""
+            <p><strong>Service:</strong> {vuln.get('service', 'Unknown')}</p>
+            <p><strong>Port:</strong> {vuln.get('port', 'Unknown')}</p>
+            <p><strong>Version:</strong> {vuln.get('version', 'Unknown')}</p>"""
             
             # Добавляем CVSS score для CVE
             if vuln.get('cvss_score'):
                 html_content += f"""<p><strong>CVSS Score:</strong> {vuln.get('cvss_score')}</p>"""
             
             html_content += f"""
-    <p><strong>Issue:</strong> {vuln.get('issue', 'No details')}</p>
-    <p><strong>Recommendation:</strong> {vuln.get('recommendation', 'No recommendation')}</p>"""
+            <p><strong>Issue:</strong> {vuln.get('issue', 'No details')}</p>
+            <p><strong>Recommendation:</strong> {vuln.get('recommendation', 'No recommendation')}</p>"""
             
             # Добавляем источник для CVE
             if vuln.get('source'):
@@ -156,8 +157,8 @@ body { font-family: Arial, sans-serif; margin: 20px; }
                 html_content += f"""<p><strong>Script:</strong> {vuln.get('script', 'N/A')}</p>"""
             
             html_content += """
-</div>
-"""
+        </div>
+        """
         
         html_content += "</body></html>"
         self.text_edit.setHtml(html_content)
@@ -465,9 +466,14 @@ class ResultsTableTab(BaseTabModule):
         
         # Проверяем CVE для сервисов
         for port in host.ports:
-            if port.state == "open" and port.service and port.version:
+            if port.state == "open" and port.service and port.service != "unknown":
+                # Проверяем CVE уязвимости
                 cve_vulns = self._check_cve_vulnerabilities(port, host)
                 vulnerabilities.extend(cve_vulns)
+                
+                # Проверяем уязвимости версий
+                version_vulns = self._check_version_vulnerabilities(port, host)
+                vulnerabilities.extend(version_vulns)
         
         return vulnerabilities
     
@@ -497,41 +503,6 @@ class ResultsTableTab(BaseTabModule):
             self.logger.debug(f"CVE check failed for {port.service}: {e}")
         
         return vulnerabilities
-    
-    def _parse_vulnerability_from_script(self, script_name: str, script_output: str, host: HostInfo) -> dict:
-        """Парсит информацию об уязвимости из вывода скрипта"""
-        script_lower = script_output.lower()
-        
-        # Определяем уровень риска по ключевым словам
-        risk = "LOW"
-        if any(keyword in script_lower for keyword in ['exploit', 'remote code', 'privilege escalation', 'critical']):
-            risk = "HIGH"
-        elif any(keyword in script_lower for keyword in ['vulnerable', 'vulnerability', 'cve', 'risk']):
-            risk = "MEDIUM"
-        
-        # Находим связанный порт
-        port_match = re.search(r'port(\d+)_', script_name)
-        port_num = port_match.group(1) if port_match else "unknown"
-        
-        # Находим сервис
-        service = "unknown"
-        version = "unknown"
-        for port in host.ports:
-            if str(port.port) == port_num:
-                service = port.service
-                version = port.version or "unknown"
-                break
-        
-        return {
-            'type': 'SCRIPT',
-            'script': script_name,
-            'service': service,
-            'port': port_num,
-            'version': version,
-            'risk': risk,
-            'issue': script_output[:200] + "..." if len(script_output) > 200 else script_output,
-            'recommendation': 'Investigate the script output for details'
-        }
     
     def _check_version_vulnerabilities(self, port, host: HostInfo) -> list:
         """Проверяет версии сервисов на известные уязвимости"""
@@ -566,6 +537,60 @@ class ResultsTableTab(BaseTabModule):
                 })
         
         return vulnerabilities
+    
+    def _parse_vulnerability_from_script(self, script_name: str, script_output: str, host: HostInfo) -> dict:
+        """Парсит информацию об уязвимости из вывода скрипта"""
+        if not script_output or not script_name:
+            return None
+            
+        script_lower = script_output.lower()
+        
+        # Пропускаем информационные скрипты без уязвимостей
+        non_vulnerability_scripts = ['http-title', 'http-date', 'ssh-hostkey', 'banner', 'port-states']
+        if any(non_vuln in script_name for non_vuln in non_vulnerability_scripts):
+            return None
+        
+        # Определяем уровень риска по ключевым словам
+        risk = "LOW"
+        issue = script_output[:200] + "..." if len(script_output) > 200 else script_output
+        
+        if any(keyword in script_lower for keyword in ['exploit', 'remote code', 'privilege escalation', 'critical', 'cve']):
+            risk = "HIGH"
+        elif any(keyword in script_lower for keyword in ['vulnerable', 'vulnerability', 'risk', 'warning']):
+            risk = "MEDIUM"
+        elif any(keyword in script_lower for keyword in ['info', 'detected', 'found']):
+            risk = "LOW"
+        
+        # Находим связанный порт
+        port_num = "unknown"
+        service = "unknown"
+        
+        # Пытаемся извлечь порт из имени скрипта
+        port_match = re.search(r'port(\d+)_', script_name)
+        if port_match:
+            port_num = port_match.group(1)
+        else:
+            # Ищем порт в выводе
+            port_in_output = re.search(r'port\s*(\d+)', script_lower)
+            if port_in_output:
+                port_num = port_in_output.group(1)
+        
+        # Находим сервис для порта
+        if port_num != "unknown":
+            for port in host.ports:
+                if str(port.port) == port_num:
+                    service = port.service
+                    break
+        
+        return {
+            'type': 'SCRIPT',
+            'script': script_name,
+            'service': service,
+            'port': port_num,
+            'risk': risk,
+            'issue': issue,
+            'recommendation': 'Investigate the script output for details'
+        }
     
     def _on_row_selected(self):
         """Обрабатывает выбор строки в таблице"""
