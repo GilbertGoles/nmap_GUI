@@ -10,12 +10,20 @@ class ScanType(Enum):
     DISCOVERY = "discovery"
     CUSTOM = "custom"
 
+class ScanIntensity(Enum):
+    """Уровень интенсивности сканирования"""
+    SAFE = "safe"           # Только безопасные проверки
+    NORMAL = "normal"       # Стандартные проверки
+    AGGRESSIVE = "aggressive"  # Расширенные проверки (только с разрешения)
+    PENETRATION = "penetration" # Полная проверка уязвимостей (только с письменного разрешения)
+
 @dataclass
 class ScanConfig:
     """Конфигурация сканирования NMAP"""
     targets: List[str]
     scan_type: ScanType = ScanType.QUICK
-    scan_id: Optional[str] = None  # ✅ Сделать опциональным
+    scan_intensity: ScanIntensity = ScanIntensity.SAFE  # НОВОЕ ПОЛЕ
+    scan_id: Optional[str] = None
     custom_command: str = ""
     threads: int = 4
     timing_template: str = "T4"
@@ -54,6 +62,24 @@ class ScanConfig:
                 cmd_parts.append("-O")
             if self.script_scan:
                 cmd_parts.append("-sC")
+        
+        # НАСТРОЙКИ ИНТЕНСИВНОСТИ - ВАЖНОЕ ИЗМЕНЕНИЕ!
+        if self.scan_intensity == ScanIntensity.SAFE:
+            # Только безопасные скрипты
+            if self.script_scan:
+                cmd_parts.append("--script=safe,default")
+        elif self.scan_intensity == ScanIntensity.NORMAL:
+            # Стандартные скрипты + дополнительные безопасные
+            if self.script_scan:
+                cmd_parts.append("--script=safe,default,version,discovery")
+        elif self.scan_intensity == ScanIntensity.AGGRESSIVE:
+            # Расширенные скрипты (требует предупреждения)
+            if self.script_scan:
+                cmd_parts.append("--script=safe,default,version,discovery,vuln")
+        elif self.scan_intensity == ScanIntensity.PENETRATION:
+            # Полная проверка уязвимостей (требует явного подтверждения)
+            if self.script_scan:
+                cmd_parts.append("--script=safe,default,version,discovery,vuln,exploit")
         
         # Порты (игнорируем для quick и discovery сканирования)
         if self.port_range and self.scan_type not in [ScanType.QUICK, ScanType.DISCOVERY]:
