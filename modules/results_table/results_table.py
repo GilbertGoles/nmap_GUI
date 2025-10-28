@@ -97,7 +97,9 @@ class VulnerabilityDetailsDialog(QDialog):
             self.text_edit.setText("No vulnerabilities found")
             return
         
-        html_content = """
+        # Безопасное создание HTML
+        html_parts = []
+        html_parts.append("""
     <html>
     <head>
         <style>
@@ -117,51 +119,45 @@ class VulnerabilityDetailsDialog(QDialog):
         </style>
     </head>
     <body>
-        <h2>Found Vulnerabilities: {count}</h2>
-    """.format(count=len(vulnerabilities))
+    """)
+        
+        html_parts.append(f"<h2>Found Vulnerabilities: {len(vulnerabilities)}</h2>")
         
         for i, vuln in enumerate(vulnerabilities, 1):
             risk = vuln.get('risk', 'low').lower()
             risk_class = f"risk-{risk}"
             vuln_class = risk
             
-            # Определяем класс для CVE уязвимостей
             if vuln.get('type') == 'CVE':
                 vuln_class = 'cve'
             
-            html_content += f"""
-        <div class="vuln {vuln_class}">
-            <h3>"""
-        
-            # Добавляем CVE ID если есть
+            html_parts.append(f'<div class="vuln {vuln_class}">')
+            html_parts.append('<h3>')
+            
             if vuln.get('type') == 'CVE':
-                html_content += f"""<span class="cve-id">{vuln.get('id', 'Unknown CVE')}</span> - """
+                html_parts.append(f'<span class="cve-id">{vuln.get("id", "Unknown CVE")}</span> - ')
             
-            html_content += f"""Vulnerability #{i} <span class="risk {risk_class}">{vuln.get('risk', 'UNKNOWN')}</span></h3>
-            <p><strong>Service:</strong> {vuln.get('service', 'Unknown')}</p>
-            <p><strong>Port:</strong> {vuln.get('port', 'Unknown')}</p>
-            <p><strong>Version:</strong> {vuln.get('version', 'Unknown')}</p>"""
+            html_parts.append(f'Vulnerability #{i} <span class="risk {risk_class}">{vuln.get("risk", "UNKNOWN")}</span></h3>')
+            html_parts.append(f'<p><strong>Service:</strong> {vuln.get("service", "Unknown")}</p>')
+            html_parts.append(f'<p><strong>Port:</strong> {vuln.get("port", "Unknown")}</p>')
+            html_parts.append(f'<p><strong>Version:</strong> {vuln.get("version", "Unknown")}</p>')
             
-            # Добавляем CVSS score для CVE
             if vuln.get('cvss_score'):
-                html_content += f"""<p><strong>CVSS Score:</strong> {vuln.get('cvss_score')}</p>"""
+                html_parts.append(f'<p><strong>CVSS Score:</strong> {vuln.get("cvss_score")}</p>')
             
-            html_content += f"""
-            <p><strong>Issue:</strong> {vuln.get('issue', 'No details')}</p>
-            <p><strong>Recommendation:</strong> {vuln.get('recommendation', 'No recommendation')}</p>"""
+            html_parts.append(f'<p><strong>Issue:</strong> {vuln.get("issue", "No details")}</p>')
+            html_parts.append(f'<p><strong>Recommendation:</strong> {vuln.get("recommendation", "No recommendation")}</p>')
             
-            # Добавляем источник для CVE
             if vuln.get('source'):
-                html_content += f"""<p><strong>Source:</strong> {vuln.get('source')}</p>"""
+                html_parts.append(f'<p><strong>Source:</strong> {vuln.get("source")}</p>')
             elif vuln.get('script'):
-                html_content += f"""<p><strong>Script:</strong> {vuln.get('script', 'N/A')}</p>"""
+                html_parts.append(f'<p><strong>Script:</strong> {vuln.get("script", "N/A")}</p>')
             
-            html_content += """
-        </div>
-        """
+            html_parts.append('</div>')
         
-        html_content += "</body></html>"
-        self.text_edit.setHtml(html_content)
+        html_parts.append('</body></html>')
+        
+        self.text_edit.setHtml(''.join(html_parts))
 
 class ResultsTableTab(BaseTabModule):
     
