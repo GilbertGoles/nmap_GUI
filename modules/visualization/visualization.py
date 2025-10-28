@@ -483,29 +483,46 @@ class VisualizationTab(BaseTabModule):
         
         return group
     
+    @pyqtSlot(dict)
     def _on_results_updated(self, data):
         """Обрабатывает обновление результатов"""
         scan_id = data.get('scan_id')
         results = data.get('results')
         
-        print(f"🟣 [Visualization] Results updated: {scan_id}, has results: {results is not None}")
+        print(f"🟣 [Visualization] Results updated: {scan_id}")
+        print(f"🟣 [Visualization] Has results: {results is not None}")
+        print(f"🟣 [Visualization] Is initialized: {self._is_initialized}")
         
-        if results:
+        if results and self._is_initialized:
             self.current_results = results
-            if self._is_initialized:
-                self._build_graph_from_results(results)
+            self._build_graph_from_results(results)
+        elif results:
+            # Сохраняем результаты, но ждем инициализации UI
+            self.current_results = results
+            print("🟣 [Visualization] Results saved, waiting for UI initialization")
     
+    @pyqtSlot(dict)
     def _on_scan_completed(self, data):
         """Обрабатывает завершение сканирования"""
         scan_id = data.get('scan_id')
         results = data.get('results')
         
-        print(f"🟣 [Visualization] Scan completed: {scan_id}, has results: {results is not None}")
+        print(f"🟣 [Visualization] Scan completed: {scan_id}")
         
-        if results:
+        if results and self._is_initialized:
             self.current_results = results
-            if self._is_initialized:
-                self._build_graph_from_results(results)
+            self._build_graph_from_results(results)
+        elif results:
+            self.current_results = results
+    
+    def showEvent(self, event):
+        """Вызывается когда вкладка становится видимой"""
+        super().showEvent(event)
+        print(f"🟣 [Visualization] Tab shown, building graph if results available")
+        
+        # Если есть результаты и UI инициализирован, строим граф
+        if self.current_results and self._is_initialized:
+            self._build_graph_from_results(self.current_results)
     
     def _build_graph_from_results(self, scan_result: ScanResult):
         """Строит граф из результатов сканирования"""
