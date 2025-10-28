@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QSplitter, QGraphicsView, QGraphicsScene, QGraphicsItem,
                              QMenu, QColorDialog, QInputDialog, QMessageBox)
 from PyQt6.QtCore import Qt, pyqtSlot, QPointF, QRectF
-from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QFont, QPainterPath  # ДОБАВЛЯЕМ QColor
+from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QFont, QPainterPath
 import math
 import random
 from typing import Dict, List, Set, Tuple
@@ -324,6 +324,8 @@ class VisualizationTab(BaseTabModule):
         super().__init__(event_bus, dependencies)
         self.current_results = None
         self.graph_view = None  # Инициализируем как None
+        self.status_label = None  # Явно инициализируем
+        self._widgets_initialized = False  # Флаг инициализации виджетов
         
     def _setup_event_handlers(self):
         """Настройка обработчиков событий"""
@@ -354,6 +356,7 @@ class VisualizationTab(BaseTabModule):
         self.status_label = QLabel("No results to visualize")
         layout.addWidget(self.status_label)
         
+        self._widgets_initialized = True  # Помечаем, что виджеты инициализированы
         return widget
     
     def _create_control_panel(self) -> QGroupBox:
@@ -481,12 +484,33 @@ class VisualizationTab(BaseTabModule):
         
         return group
     
+    def _is_widget_valid(self, widget):
+        """Проверяет, что виджет существует и не удален"""
+        try:
+            # Пытаемся получить доступ к свойству виджета
+            if widget is None:
+                return False
+            # Проверяем, что объект PyQt все еще существует
+            return hasattr(widget, 'isVisible')  # Простая проверка на существование
+        except RuntimeError:
+            # Объект был удален
+            return False
+    
+    def _safe_set_status(self, message: str):
+        """Безопасно устанавливает статус с проверкой существования виджета"""
+        if self._is_widget_valid(self.status_label):
+            try:
+                self.status_label.setText(message)
+            except RuntimeError:
+                # Виджет был удален, игнорируем
+                pass
+    
     def _on_results_updated(self, data):
         """Обрабатывает обновление результатов"""
         scan_id = data.get('scan_id')
         results = data.get('results')
         
-        print(f"🟣 [Visualization] Results updated: {scan_id}, has results: {results is not None}")  # ДЕБАГ
+        print(f"🟣 [Visualization] Results updated: {scan_id}, has results: {results is not None}")
         
         if results:
             self.current_results = results
@@ -497,7 +521,7 @@ class VisualizationTab(BaseTabModule):
         scan_id = data.get('scan_id')
         results = data.get('results')
         
-        print(f"🟣 [Visualization] Scan completed: {scan_id}, has results: {results is not None}")  # ДЕБАГ
+        print(f"🟣 [Visualization] Scan completed: {scan_id}, has results: {results is not None}")
         
         if results:
             self.current_results = results
@@ -505,35 +529,39 @@ class VisualizationTab(BaseTabModule):
     
     def _build_graph_from_results(self, scan_result: ScanResult):
         """Строит граф из результатов сканирования"""
-        print(f"🟣 [Visualization] Building graph from results...")  # ДЕБАГ
+        print(f"🟣 [Visualization] Building graph from results...")
         
-        # ПРОВЕРЯЕМ, ЧТО GRAPH_VIEW ИНИЦИАЛИЗИРОВАН
-        if not hasattr(self, 'graph_view') or self.graph_view is None:
+        # Проверяем, что виджеты инициализированы
+        if not self._widgets_initialized:
+            print("❌ [Visualization] Widgets not initialized yet")
+            return
+        
+        # Проверяем, что graph_view существует
+        if not self._is_widget_valid(self.graph_view):
             print("❌ [Visualization] Graph view not initialized - recreating")
-            # Пересоздаем если нужно
-            self.graph_view = GraphView()
+            # Пытаемся пересоздать если нужно
             return
         
         self.graph_view.clear_graph()
         
         if not scan_result or not hasattr(scan_result, 'hosts'):
-            self.status_label.setText("No valid results to visualize")
-            print("❌ [Visualization] No valid results")  # ДЕБАГ
+            self._safe_set_status("No valid results to visualize")
+            print("❌ [Visualization] No valid results")
             return
         
         host_count = 0
         service_count = 0
         
-        print(f"🟣 [Visualization] Processing {len(scan_result.hosts)} hosts")  # ДЕБАГ
+        print(f"🟣 [Visualization] Processing {len(scan_result.hosts)} hosts")
         
         # Создаем узлы для хостов
         for host in scan_result.hosts:
             if host.state != "up":
-                print(f"🟣 [Visualization] Skipping host {host.ip} - state: {host.state}")  # ДЕБАГ
+                print(f"🟣 [Visualization] Skipping host {host.ip} - state: {host.state}")
                 continue
             
             host_count += 1
-            print(f"🟣 [Visualization] Adding host: {host.ip}")  # ДЕБАГ
+            print(f"🟣 [Visualization] Adding host: {host.ip}")
             
             # Узел хоста
             host_node = GraphNode(
@@ -564,20 +592,20 @@ class VisualizationTab(BaseTabModule):
                     
                     # Соединение хост-сервис
                     self.graph_view.add_edge(host_node.id, service_node.id, port.service)
-                    print(f"🟣 [Visualization] Added service: {port.service} on port {port.port}")  # ДЕБАГ
+                    print(f"🟣 [Visualization] Added service: {port.service} on port {port.port}")
         
         # Применяем layout если есть узлы
         if host_count > 0:
             self.graph_view.apply_force_directed_layout()
-            self.status_label.setText(f"Visualizing {host_count} hosts, {service_count} services")
-            print(f"🟣 [Visualization] Graph built successfully: {host_count} hosts, {service_count} services")  # ДЕБАГ
+            self._safe_set_status(f"Visualizing {host_count} hosts, {service_count} services")
+            print(f"🟣 [Visualization] Graph built successfully: {host_count} hosts, {service_count} services")
         else:
-            self.status_label.setText("No active hosts found in results")
-            print("❌ [Visualization] No active hosts found")  # ДЕБАГ
+            self._safe_set_status("No active hosts found in results")
+            print("❌ [Visualization] No active hosts found")
     
     def _apply_layout(self):
         """Применяет выбранный layout"""
-        if not self.graph_view or not self.graph_view.nodes:
+        if not self._is_widget_valid(self.graph_view) or not self.graph_view.nodes:
             return
         
         layout_type = self.layout_combo.currentText()
@@ -593,7 +621,7 @@ class VisualizationTab(BaseTabModule):
     
     def _apply_circular_layout(self):
         """Применяет круговой layout"""
-        if not self.graph_view:
+        if not self._is_widget_valid(self.graph_view):
             return
             
         nodes = list(self.graph_view.nodes.values())
@@ -611,7 +639,7 @@ class VisualizationTab(BaseTabModule):
     
     def _apply_grid_layout(self):
         """Применяет grid layout"""
-        if not self.graph_view:
+        if not self._is_widget_valid(self.graph_view):
             return
             
         nodes = list(self.graph_view.nodes.values())
@@ -630,7 +658,7 @@ class VisualizationTab(BaseTabModule):
     
     def _apply_hierarchical_layout(self):
         """Применяет иерархический layout"""
-        if not self.graph_view:
+        if not self._is_widget_valid(self.graph_view):
             return
             
         # Простая иерархия: хосты на одном уровне, сервисы на другом
@@ -663,22 +691,22 @@ class VisualizationTab(BaseTabModule):
     
     def _zoom_in(self):
         """Увеличивает масштаб"""
-        if self.graph_view:
+        if self._is_widget_valid(self.graph_view):
             self.graph_view.zoom_in()
     
     def _zoom_out(self):
         """Уменьшает масштаб"""
-        if self.graph_view:
+        if self._is_widget_valid(self.graph_view):
             self.graph_view.zoom_out()
     
     def _reset_view(self):
         """Сбрасывает вид"""
-        if self.graph_view:
+        if self._is_widget_valid(self.graph_view):
             self.graph_view.reset_zoom()
     
     def _on_display_settings_changed(self):
         """Обрабатывает изменение настроек отображения"""
-        if not self.graph_view:
+        if not self._is_widget_valid(self.graph_view):
             return
         
         self.graph_view.show_labels = self.show_labels_check.isChecked()
@@ -687,7 +715,7 @@ class VisualizationTab(BaseTabModule):
     
     def _on_heat_map_toggled(self, checked: bool):
         """Обрабатывает включение/выключение heat map"""
-        if not self.graph_view or not self.current_results:
+        if not self._is_widget_valid(self.graph_view) or not self.current_results:
             return
         
         if checked:
@@ -700,7 +728,7 @@ class VisualizationTab(BaseTabModule):
     
     def _apply_heat_map(self):
         """Применяет heat map на основе количества открытых портов"""
-        if not self.graph_view or not self.current_results:
+        if not self._is_widget_valid(self.graph_view) or not self.current_results:
             return
         
         # Находим максимальное количество портов для нормализации
@@ -729,7 +757,7 @@ class VisualizationTab(BaseTabModule):
     
     def _on_node_size_changed(self, value: int):
         """Обрабатывает изменение размера узлов"""
-        if not self.graph_view:
+        if not self._is_widget_valid(self.graph_view):
             return
         
         for node in self.graph_view.nodes.values():
