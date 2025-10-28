@@ -322,8 +322,10 @@ class ScanLauncherTab(QWidget):
         if scan_id == self.current_scan_id:
             if progress >= 0:
                 self.progress_bar.setValue(progress)
-                if status and progress < 100:
-                    self.log_output.append(f"📊 Progress: {progress}% - {status}")
+                if status:
+                    # Добавляем в лог только значимые обновления
+                    if progress % 10 == 0 or progress == 100 or "error" in status.lower():
+                        self.log_output.append(f"📊 Progress: {progress}% - {status}")
             else:
                 self.log_output.append(f"⚠️ Error: {status}")
     
