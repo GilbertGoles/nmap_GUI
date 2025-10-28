@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QSplitter, QGraphicsView, QGraphicsScene, QGraphicsItem,
                              QMenu, QColorDialog, QInputDialog, QMessageBox)
 from PyQt6.QtCore import Qt, pyqtSlot, QPointF, QRectF
-from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QFont, QPainterPath
+from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QFont, QPainterPath  # ДОБАВЛЯЕМ QColor
 import math
 import random
 from typing import Dict, List, Set, Tuple
@@ -485,6 +485,8 @@ class VisualizationTab(BaseTabModule):
         scan_id = data.get('scan_id')
         results = data.get('results')
         
+        print(f"🟣 [Visualization] Results updated: {scan_id}, has results: {results is not None}")  # ДЕБАГ
+        
         if results:
             self.current_results = results
             self._build_graph_from_results(results)
@@ -494,30 +496,40 @@ class VisualizationTab(BaseTabModule):
         scan_id = data.get('scan_id')
         results = data.get('results')
         
+        print(f"🟣 [Visualization] Scan completed: {scan_id}, has results: {results is not None}")  # ДЕБАГ
+        
         if results:
             self.current_results = results
             self._build_graph_from_results(results)
     
     def _build_graph_from_results(self, scan_result: ScanResult):
         """Строит граф из результатов сканирования"""
+        print(f"🟣 [Visualization] Building graph from results...")  # ДЕБАГ
+        
         if not hasattr(self, 'graph_view') or not self.graph_view:
+            print("❌ [Visualization] Graph view not initialized")  # ДЕБАГ
             return
         
         self.graph_view.clear_graph()
         
         if not scan_result or not hasattr(scan_result, 'hosts'):
             self.status_label.setText("No valid results to visualize")
+            print("❌ [Visualization] No valid results")  # ДЕБАГ
             return
         
         host_count = 0
         service_count = 0
         
+        print(f"🟣 [Visualization] Processing {len(scan_result.hosts)} hosts")  # ДЕБАГ
+        
         # Создаем узлы для хостов
         for host in scan_result.hosts:
             if host.state != "up":
+                print(f"🟣 [Visualization] Skipping host {host.ip} - state: {host.state}")  # ДЕБАГ
                 continue
             
             host_count += 1
+            print(f"🟣 [Visualization] Adding host: {host.ip}")  # ДЕБАГ
             
             # Узел хоста
             host_node = GraphNode(
@@ -548,24 +560,93 @@ class VisualizationTab(BaseTabModule):
                     
                     # Соединение хост-сервис
                     self.graph_view.add_edge(host_node.id, service_node.id, port.service)
+                    print(f"🟣 [Visualization] Added service: {port.service} on port {port.port}")  # ДЕБАГ
         
-        # Применяем layout только если есть узлы
+        # Применяем layout если есть узлы
         if host_count > 0:
-            self._apply_layout()
-            self.status_label.setText(f"Visualized {host_count} hosts, {service_count} services")
+            self.graph_view.apply_force_directed_layout()
+            self.status_label.setText(f"Visualizing {host_count} hosts, {service_count} services")
+            print(f"🟣 [Visualization] Graph built successfully: {host_count} hosts, {service_count} services")  # ДЕБАГ
         else:
-            self.status_label.setText("No active hosts found to visualize")
+            self.status_label.setText("No active hosts found in results")
+            print("❌ [Visualization] No active hosts found")  # ДЕБАГ
     
     def _apply_layout(self):
         """Применяет выбранный layout"""
-        if not self.graph_view:
+        if not self.graph_view.nodes:
             return
         
         layout_type = self.layout_combo.currentText()
         
         if layout_type == "Force Directed":
             self.graph_view.apply_force_directed_layout()
-        # Другие layout можно добавить позже
+        elif layout_type == "Circular":
+            self._apply_circular_layout()
+        elif layout_type == "Grid":
+            self._apply_grid_layout()
+        elif layout_type == "Hierarchical":
+            self._apply_hierarchical_layout()
+    
+    def _apply_circular_layout(self):
+        """Применяет круговой layout"""
+        nodes = list(self.graph_view.nodes.values())
+        radius = 200
+        angle_step = 2 * math.pi / len(nodes)
+        
+        for i, node in enumerate(nodes):
+            angle = i * angle_step
+            node.position = QPointF(
+                radius * math.cos(angle),
+                radius * math.sin(angle)
+            )
+        
+        self.graph_view.render_graph()
+    
+    def _apply_grid_layout(self):
+        """Применяет grid layout"""
+        nodes = list(self.graph_view.nodes.values())
+        cols = math.ceil(math.sqrt(len(nodes)))
+        spacing = 100
+        
+        for i, node in enumerate(nodes):
+            row = i // cols
+            col = i % cols
+            node.position = QPointF(
+                col * spacing - (cols-1)*spacing/2,
+                row * spacing - (len(nodes)//cols)*spacing/2
+            )
+        
+        self.graph_view.render_graph()
+    
+    def _apply_hierarchical_layout(self):
+        """Применяет иерархический layout"""
+        # Простая иерархия: хосты на одном уровне, сервисы на другом
+        hosts = [n for n in self.graph_view.nodes.values() if n.type == NodeType.HOST]
+        services = [n for n in self.graph_view.nodes.values() if n.type == NodeType.SERVICE]
+        
+        # Размещаем хосты
+        host_spacing = 150
+        for i, host in enumerate(hosts):
+            host.position = QPointF(
+                i * host_spacing - (len(hosts)-1)*host_spacing/2,
+                -100
+            )
+        
+        # Размещаем сервисы под хостами
+        for service in services:
+            # Находим связанный хост
+            connected_hosts = [edge.source_id for edge in self.graph_view.edges 
+                             if edge.target_id == service.id]
+            if connected_hosts:
+                host = self.graph_view.nodes.get(connected_hosts[0])
+                if host:
+                    # Размещаем сервис под хостом
+                    service.position = QPointF(
+                        host.position.x(),
+                        host.position.y() + 100
+                    )
+        
+        self.graph_view.render_graph()
     
     def _zoom_in(self):
         """Увеличивает масштаб"""
@@ -584,125 +665,75 @@ class VisualizationTab(BaseTabModule):
     
     def _on_display_settings_changed(self):
         """Обрабатывает изменение настроек отображения"""
-        if self.graph_view:
-            self.graph_view.show_labels = self.show_labels_check.isChecked()
-            self.graph_view.show_connections = self.show_connections_check.isChecked()
+        if not self.graph_view:
+            return
+        
+        self.graph_view.show_labels = self.show_labels_check.isChecked()
+        self.graph_view.show_connections = self.show_connections_check.isChecked()
+        self.graph_view.render_graph()
+    
+    def _on_heat_map_toggled(self, checked: bool):
+        """Обрабатывает включение/выключение heat map"""
+        if not self.graph_view or not self.current_results:
+            return
+        
+        if checked:
+            self._apply_heat_map()
+        else:
+            # Восстанавливаем стандартные цвета
+            for node in self.graph_view.nodes.values():
+                node._setup_appearance()
             self.graph_view.render_graph()
     
-    def _on_heat_map_toggled(self, enabled):
-        """Обрабатывает включение/выключение тепловой карты"""
-        # TODO: Реализовать тепловую карту
-        pass
+    def _apply_heat_map(self):
+        """Применяет heat map на основе количества открытых портов"""
+        if not self.graph_view or not self.current_results:
+            return
+        
+        # Находим максимальное количество портов для нормализации
+        max_ports = 0
+        for host in self.current_results.hosts:
+            open_ports = len([p for p in host.ports if p.state == "open"])
+            max_ports = max(max_ports, open_ports)
+        
+        if max_ports == 0:
+            return
+        
+        # Применяем цвета heat map
+        for node in self.graph_view.nodes.values():
+            if node.type == NodeType.HOST and node.data:
+                open_ports = len([p for p in node.data.ports if p.state == "open"])
+                intensity = open_ports / max_ports
+                
+                # От зеленого (мало портов) к красному (много портов)
+                red = int(255 * intensity)
+                green = int(255 * (1 - intensity))
+                blue = 50
+                
+                node.color = QColor(red, green, blue)
+        
+        self.graph_view.render_graph()
     
-    def _on_node_size_changed(self, value):
+    def _on_node_size_changed(self, value: int):
         """Обрабатывает изменение размера узлов"""
         if not self.graph_view:
             return
-            
-        # Обновляем размер всех узлов
+        
         for node in self.graph_view.nodes.values():
-            # Базовый размер в зависимости от типа узла
-            base_sizes = {
-                NodeType.HOST: 50,
-                NodeType.NETWORK: 60, 
-                NodeType.SERVICE: 40,
-                NodeType.PORT: 30
-            }
-            base_size = base_sizes.get(node.type, 40)
-            
-            # Масштабируем based on slider value (20-100)
-            scale_factor = value / 40.0  # 40 is default slider position
-            node.size = base_size * scale_factor
+            # Сохраняем пропорции по типу
+            if node.type == NodeType.HOST:
+                node.size = value + 10
+            elif node.type == NodeType.NETWORK:
+                node.size = value + 20
+            elif node.type == NodeType.SERVICE:
+                node.size = value
+            elif node.type == NodeType.PORT:
+                node.size = value - 10
         
         self.graph_view.render_graph()
     
     def _on_layers_changed(self):
         """Обрабатывает изменение видимости слоев"""
-        if not self.graph_view or not self.current_results:
-            return
-        
-        self.graph_view.clear_graph()
-        
-        # Перестраиваем граф с учетом включенных слоев
-        for host in self.current_results.hosts:
-            if host.state != "up":
-                continue
-            
-            # Хост
-            if self.hosts_layer_check.isChecked():
-                host_node = GraphNode(
-                    node_id=f"host_{host.ip}",
-                    node_type=NodeType.HOST,
-                    label=host.hostname or host.ip,
-                    data=host
-                )
-                self.graph_view.add_node(host_node)
-            
-            # Порты и сервисы
-            for port in host.ports:
-                if port.state == "open":
-                    # Сервис
-                    if self.services_layer_check.isChecked():
-                        service_node = GraphNode(
-                            node_id=f"service_{host.ip}_{port.port}",
-                            node_type=NodeType.SERVICE,
-                            label=f"{port.service}\n{port.port}",
-                            data=port
-                        )
-                        self.graph_view.add_node(service_node)
-                        
-                        # Соединение хост-сервис
-                        if self.hosts_layer_check.isChecked():
-                            self.graph_view.add_edge(host_node.id, service_node.id, port.service)
-                    
-                    # Отдельный слой портов
-                    if self.ports_layer_check.isChecked():
-                        port_node = GraphNode(
-                            node_id=f"port_{host.ip}_{port.port}",
-                            node_type=NodeType.PORT,
-                            label=str(port.port),
-                            data=port
-                        )
-                        self.graph_view.add_node(port_node)
-        
-        # Сети (группировка хостов по подсетям)
-        if self.networks_layer_check.isChecked():
-            self._add_network_nodes()
-        
-        self._apply_layout()
-    
-    def _add_network_nodes(self):
-        """Добавляет узлы сетей для группировки хостов"""
-        if not self.current_results:
-            return
-        
-        # Группируем хосты по сетям /24
-        networks = {}
-        for host in self.current_results.hosts:
-            if host.state != "up":
-                continue
-            
-            # Извлекаем сеть из IP (простая группировка по /24)
-            ip_parts = host.ip.split('.')
-            if len(ip_parts) == 4:
-                network = f"{ip_parts[0]}.{ip_parts[1]}.{ip_parts[2]}.0/24"
-                if network not in networks:
-                    networks[network] = []
-                networks[network].append(host)
-        
-        # Создаем узлы сетей
-        for network, hosts in networks.items():
-            if len(hosts) > 1:  # Только для сетей с несколькими хостами
-                network_node = GraphNode(
-                    node_id=f"network_{network}",
-                    node_type=NodeType.NETWORK,
-                    label=network,
-                    data={"hosts": hosts, "network": network}
-                )
-                self.graph_view.add_node(network_node)
-                
-                # Соединяем сеть с хостами
-                for host in hosts:
-                    host_node_id = f"host_{host.ip}"
-                    if host_node_id in self.graph_view.nodes:
-                        self.graph_view.add_edge(network_node.id, host_node_id, f"{len(hosts)} hosts")
+        # В этой версии просто перестраиваем граф
+        if self.current_results:
+            self._build_graph_from_results(self.current_results)
