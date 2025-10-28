@@ -246,7 +246,7 @@ class ScanLauncherTab(QWidget):
     
     @pyqtSlot(dict)
     def _on_scan_completed(self, data):
-        """Обрабатывает завершение сканирования - С УЛУЧШЕННОЙ ОТЛАДКОЙ"""
+        """Обрабатывает завершение сканирования - С ДЕТАЛЬНОЙ ОТЛАДКОЙ"""
         scan_id = data.get('scan_id')
         results = data.get('results')
         
@@ -260,7 +260,19 @@ class ScanLauncherTab(QWidget):
                     self.log_output.append("💡 Debug info: Check if targets are reachable")
                 
                 for host in results.hosts:
+                    # ОТЛАДОЧНАЯ ИНФОРМАЦИЯ
+                    self.log_output.append(f"🔍 DEBUG: Host {host.ip} has {len(host.ports)} total ports")
+                    
                     open_ports = [port for port in host.ports if port.state == 'open']
+                    filtered_ports = [port for port in host.ports if port.state == 'filtered']
+                    closed_ports = [port for port in host.ports if port.state == 'closed']
+                    
+                    self.log_output.append(f"🔍 DEBUG: Open: {len(open_ports)}, Filtered: {len(filtered_ports)}, Closed: {len(closed_ports)}")
+                    
+                    # Вывод всех состояний портов для отладки
+                    for port in host.ports:
+                        self.log_output.append(f"🔍 DEBUG: Port {port.port}/{port.protocol} - State: {port.state}")
+                    
                     hostname = host.hostname if host.hostname else "N/A"
                     
                     self.log_output.append(f"  • Host: {host.ip} ({hostname}) - State: {host.state}")
