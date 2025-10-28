@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QLineEdit, QComboBox, QPushButton, QListWidget,
                              QListWidgetItem, QCheckBox, QFormLayout, QLabel,
                              QTextEdit, QSplitter, QTableWidget, QTableWidgetItem,
-                             QHeaderView)
+                             QHeaderView, QInputDialog, QMessageBox)
 from PyQt6.QtCore import Qt, pyqtSlot
 import re
 from modules.base_module import BaseTabModule
@@ -88,6 +88,10 @@ class SmartFiltersTab(BaseTabModule):
         self.critical_services_check = QCheckBox("Show only critical services")
         layout.addRow(self.critical_services_check)
         
+        # Фильтр по уязвимостям
+        self.vulnerable_only_check = QCheckBox("Show only potentially vulnerable services")
+        layout.addRow(self.vulnerable_only_check)
+        
         # Кнопка применения
         self.apply_quick_filters_btn = QPushButton("Apply Quick Filters")
         self.apply_quick_filters_btn.clicked.connect(self._apply_quick_filters)
@@ -166,9 +170,9 @@ class SmartFiltersTab(BaseTabModule):
         
         # Таблица отфильтрованных хостов
         self.filtered_results_table = QTableWidget()
-        self.filtered_results_table.setColumnCount(5)
+        self.filtered_results_table.setColumnCount(6)
         self.filtered_results_table.setHorizontalHeaderLabels([
-            "Host", "Service", "Port", "Version", "Match Reason"
+            "Host", "Service", "Port", "Version", "Risk Level", "Match Reason"
         ])
         
         header = self.filtered_results_table.horizontalHeader()
@@ -176,7 +180,8 @@ class SmartFiltersTab(BaseTabModule):
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
         
         layout.addWidget(self.filtered_results_table)
         
@@ -191,20 +196,28 @@ class SmartFiltersTab(BaseTabModule):
             },
             "SSH Servers": {
                 "service": "ssh",
-                "ports": "22"
+                "ports": "22",
+                "critical": True
             },
             "Database Servers": {
                 "service": "mysql|postgresql|mongodb|redis",
-                "ports": "3306,5432,27017,6379"
+                "ports": "3306,5432,27017,6379",
+                "critical": True
             },
-            "Potential Vulnerable HTTP": {
+            "Potentially Vulnerable HTTP": {
                 "service": "apache|nginx|iis",
                 "version": "2.4.49|2.4.50",
-                "critical": True
+                "critical": True,
+                "vulnerable": True
             },
             "SSL/TLS Services": {
                 "tags": "ssl-cert",
                 "ports": "443,993,995,465"
+            },
+            "High Risk Services": {
+                "service": "ftp|telnet|vnc|rdp",
+                "critical": True,
+                "vulnerable": True
             }
         }
         
@@ -226,6 +239,7 @@ class SmartFiltersTab(BaseTabModule):
         port_filter = self.port_filter.text()
         os_pattern = self.os_filter.text().lower()
         critical_only = self.critical_services_check.isChecked()
+        vulnerable_only = self.vulnerable_only_check.isChecked()
         
         for host in self.current_results.hosts:
             if host.state != "up":
@@ -258,11 +272,17 @@ class SmartFiltersTab(BaseTabModule):
                 if critical_only and not self._is_critical_service(port):
                     continue
                 
+                # Потенциально уязвимые сервисы
+                if vulnerable_only and not self._is_potentially_vulnerable(host, port):
+                    continue
+                
                 if match_reasons or (not service_pattern and not version_pattern and not port_filter):
+                    risk_level = self._assess_risk_level(host, port)
                     filtered_hosts.append({
                         'host': host,
                         'port': port,
-                        'match_reasons': match_reasons or ['All ports']
+                        'match_reasons': match_reasons or ['All ports'],
+                        'risk_level': risk_level
                     })
         
         self._display_filtered_results(filtered_hosts)
@@ -302,10 +322,12 @@ class SmartFiltersTab(BaseTabModule):
                     match_reasons.append(f"Tags: {tags_filter}")
                 
                 if match_reasons:
+                    risk_level = self._assess_risk_level(host, port)
                     filtered_hosts.append({
                         'host': host,
                         'port': port,
-                        'match_reasons': match_reasons
+                        'match_reasons': match_reasons,
+                        'risk_level': risk_level
                     })
         
         self._display_filtered_results(filtered_hosts)
@@ -327,6 +349,7 @@ class SmartFiltersTab(BaseTabModule):
             self.port_filter.setText(filter_config.get('ports', ''))
             self.os_filter.setText(filter_config.get('os', ''))
             self.critical_services_check.setChecked(filter_config.get('critical', False))
+            self.vulnerable_only_check.setChecked(filter_config.get('vulnerable', False))
             
             # Применяем фильтр
             self._apply_quick_filters()
@@ -334,7 +357,7 @@ class SmartFiltersTab(BaseTabModule):
     def _save_current_filter(self):
         """Сохраняет текущий фильтр"""
         filter_name, ok = QInputDialog.getText(
-            self.get_ui(), 
+            self, 
             "Save Filter", 
             "Enter filter name:"
         )
@@ -345,7 +368,8 @@ class SmartFiltersTab(BaseTabModule):
                 'version': self.version_filter.text(),
                 'ports': self.port_filter.text(),
                 'os': self.os_filter.text(),
-                'critical': self.critical_services_check.isChecked()
+                'critical': self.critical_services_check.isChecked(),
+                'vulnerable': self.vulnerable_only_check.isChecked()
             }
             
             self.saved_filters[filter_name] = filter_config
@@ -364,6 +388,7 @@ class SmartFiltersTab(BaseTabModule):
             self.port_filter.setText(filter_config.get('ports', ''))
             self.os_filter.setText(filter_config.get('os', ''))
             self.critical_services_check.setChecked(filter_config.get('critical', False))
+            self.vulnerable_only_check.setChecked(filter_config.get('vulnerable', False))
     
     def _delete_saved_filter(self):
         """Удаляет выбранный сохраненный фильтр"""
@@ -375,7 +400,7 @@ class SmartFiltersTab(BaseTabModule):
         filter_name = selected_items[0].text()
         
         reply = QMessageBox.question(
-            self.get_ui(),
+            self,
             "Confirm Delete",
             f"Delete filter '{filter_name}'?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
@@ -423,6 +448,43 @@ class SmartFiltersTab(BaseTabModule):
         }
         return port.service in critical_services
     
+    def _is_potentially_vulnerable(self, host, port):
+        """Определяет потенциально уязвимый сервис"""
+        # Проверяем версии на известные уязвимости
+        if port.version:
+            version_lower = port.version.lower()
+            vulnerable_indicators = ['2.4.49', '2.4.50', 'vsftpd 2.3.4', '7.0', '7.1', '7.2']
+            if any(indicator in version_lower for indicator in vulnerable_indicators):
+                return True
+        
+        # Проверяем скрипты nmap
+        for script_name, script_output in host.scripts.items():
+            if 'vulnerable' in script_output.lower() or 'vulnerability' in script_output.lower():
+                return True
+        
+        return False
+    
+    def _assess_risk_level(self, host, port):
+        """Оценивает уровень риска для сервиса"""
+        risk = "LOW"
+        
+        # Повышаем риск для критических сервисов
+        if self._is_critical_service(port):
+            risk = "MEDIUM"
+        
+        # Повышаем риск для уязвимых версий
+        if self._is_potentially_vulnerable(host, port):
+            risk = "HIGH"
+        
+        # Проверяем скрипты nmap на высокорисковые индикаторы
+        for script_name, script_output in host.scripts.items():
+            script_lower = script_output.lower()
+            if any(keyword in script_lower for keyword in ['exploit', 'cve', 'remote code', 'privilege escalation']):
+                risk = "HIGH"
+                break
+        
+        return risk
+    
     def _match_regex(self, port, host, pattern):
         """Проверяет совпадение по регулярному выражению"""
         import re
@@ -463,7 +525,18 @@ class SmartFiltersTab(BaseTabModule):
             self.filtered_results_table.setItem(row, 1, QTableWidgetItem(port.service))
             self.filtered_results_table.setItem(row, 2, QTableWidgetItem(str(port.port)))
             self.filtered_results_table.setItem(row, 3, QTableWidgetItem(port.version or "N/A"))
-            self.filtered_results_table.setItem(row, 4, QTableWidgetItem("; ".join(data['match_reasons'])))
+            
+            # Уровень риска с цветовым кодированием
+            risk_item = QTableWidgetItem(data['risk_level'])
+            if data['risk_level'] == "HIGH":
+                risk_item.setBackground(QColor(255, 200, 200))  # Красный
+            elif data['risk_level'] == "MEDIUM":
+                risk_item.setBackground(QColor(255, 255, 200))  # Желтый
+            else:
+                risk_item.setBackground(QColor(200, 255, 200))  # Зеленый
+            self.filtered_results_table.setItem(row, 4, risk_item)
+            
+            self.filtered_results_table.setItem(row, 5, QTableWidgetItem("; ".join(data['match_reasons'])))
         
         self.filter_stats_label.setText(f"Found {len(filtered_data)} matches")
     
@@ -491,6 +564,3 @@ class SmartFiltersTab(BaseTabModule):
         if results:
             self.current_results = results
             self.filter_stats_label.setText(f"Scan completed: {len(results.hosts)} hosts")
-
-# Добавляем необходимые импорты
-from PyQt6.QtWidgets import QInputDialog, QMessageBox
