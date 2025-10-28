@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QPushButton,
                              QTextEdit, QHBoxLayout, QGroupBox, QComboBox,
                              QLineEdit, QCheckBox, QProgressBar, QGridLayout,
                              QMessageBox, QFrame)
-from PyQt6.QtCore import Qt, pyqtSlot
+from PyQt6.QtCore import Qt, pyqtSlot, QTimer
 import logging
 
 from core.event_bus import EventBus
@@ -17,6 +17,7 @@ class ScanLauncherTab(QWidget):
         self.scan_manager = core_modules['scan_manager']
         self.logger = logging.getLogger(__name__)
         self.current_scan_id = None
+        self.progress_timer = None
         self._setup_ui()
         self._connect_signals()
     
@@ -273,6 +274,11 @@ class ScanLauncherTab(QWidget):
             # Запускаем сканирование
             self.current_scan_id = self.scan_manager.submit_scan(config)
             
+            # Запускаем таймер для обновления прогресса
+            self.progress_timer = QTimer()
+            self.progress_timer.timeout.connect(self._update_progress_animation)
+            self.progress_timer.start(500)  # Обновление каждые 500мс
+            
             # Логируем информацию об интенсивности
             intensity_level = self.intensity_combo.currentText().split(' - ')[0]
             self.log_output.append(f"🚀 Started {intensity_level} scan: {self.current_scan_id}")
@@ -290,6 +296,18 @@ class ScanLauncherTab(QWidget):
             self.log_output.append(f"❌ Error starting scan: {e}\n")
             QMessageBox.critical(self, "Error", f"Failed to start scan: {e}")
     
+    def _update_progress_animation(self):
+        """Анимирует прогресс-бар во время сканирования"""
+        if not self.progress_bar.isVisible():
+            return
+        
+        current_value = self.progress_bar.value()
+        if current_value < 90:  # Не доходим до 100% пока сканирование не завершено
+            new_value = current_value + 1
+            if new_value > 90:
+                new_value = 10  # Сбрасываем для эффекта пульсации
+            self.progress_bar.setValue(new_value)
+    
     def _stop_scan(self):
         """Останавливает текущее сканирование"""
         if self.current_scan_id:
@@ -303,6 +321,8 @@ class ScanLauncherTab(QWidget):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.progress_bar.setVisible(False)
+        if hasattr(self, 'progress_timer') and self.progress_timer:
+            self.progress_timer.stop()
         self.current_scan_id = None
     
     @pyqtSlot(dict)
