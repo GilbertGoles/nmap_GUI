@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 import logging
 
 from core.event_bus import EventBus
-from shared.models.scan_config import ScanConfig
+from shared.models.scan_config import ScanConfig, ScanType
 from shared.models.scan_result import ScanResult
 
 class NmapEngine:
@@ -100,11 +100,6 @@ class NmapEngine:
             
             self.logger.info(f"Scan completed: {scan_config.scan_id}")
             
-            # ⚠️ ИСПРАВЛЕНИЕ: УДАЛЕН ЛИШНИЙ СИГНАЛ
-            # ScanManager уже отправляет сигнал scan_completed, 
-            # поэтому здесь это приводит к дублированию
-            # self.event_bus.scan_completed.emit(scan_result) 
-            
             return scan_result
             
         except Exception as e:
@@ -180,11 +175,6 @@ class NmapEngine:
                 pass
             
             self.logger.info(f"Comprehensive scan completed: {scan_config.scan_id}")
-            
-            # ⚠️ ИСПРАВЛЕНИЕ: УДАЛЕН ЛИШНИЙ СИГНАЛ
-            # ScanManager уже отправляет сигнал scan_completed,
-            # поэтому здесь это приводит к дублированию
-            # self.event_bus.scan_completed.emit(scan_result)
             
             return scan_result
             
@@ -365,58 +355,44 @@ class NmapEngine:
 
     def _build_nmap_command(self, scan_config: ScanConfig) -> str:
         """
-        Строит команду nmap из конфигурации
+        Строит команду nmap из конфигурации - ИСПРАВЛЕННАЯ ВЕРСИЯ
         """
         cmd_parts = ["nmap"]
         
         # Базовые опции производительности
         if scan_config.timing_template:
-            if scan_config.timing_template.startswith('T'):
-                cmd_parts.append(f"-{scan_config.timing_template}")
-            else:
-                cmd_parts.append(f"-T{scan_config.timing_template}")
+            cmd_parts.append(f"-{scan_config.timing_template}")
         
-        # Опции сканирования на основе типа
-        # --- ИСПРАВЛЕНИЕ 1: Удаляем '-F' для quick и используем '-sS' для большинства ---
-        if scan_config.scan_type.value == "quick":
-            # Для Quick Scan используем SYN сканирование вместо быстрого сканирования 100 портов
+        # Тип сканирования - ИСПРАВЛЕНИЕ ДЛЯ QUICK SCAN
+        if scan_config.scan_type == ScanType.QUICK:
+            cmd_parts.append("-F")  # Быстрое сканирование основных портов
+        elif scan_config.scan_type == ScanType.STEALTH:
             cmd_parts.append("-sS")
-        elif scan_config.scan_type.value == "stealth":
-            cmd_parts.append("-sS")
-        elif scan_config.scan_type.value == "comprehensive":
+        elif scan_config.scan_type == ScanType.COMPREHENSIVE:
             cmd_parts.extend(["-sS", "-sV", "-O", "-A"])
-        elif scan_config.scan_type.value == "discovery":
+        elif scan_config.scan_type == ScanType.DISCOVERY:
             cmd_parts.append("-sn")
+        elif scan_config.scan_type == ScanType.CUSTOM:
+            # Для кастомного сканирования используем пользовательскую команду
+            if scan_config.custom_command and scan_config.custom_command.strip():
+                custom_cmd = scan_config.custom_command.strip()
+                if "-oX" not in custom_cmd:
+                    custom_cmd += " -oX -"
+                return custom_cmd
         
-        # --- ИСПРАВЛЕНИЕ 2: Включаем опции для Quick Scan, если они выбраны ---
-        # NOTE: Мы не хотим включать '-sV', '-O', '-sC' для discovery
-        is_port_scan = scan_config.scan_type.value not in ["discovery", "custom"]
-        
-        if scan_config.service_version and is_port_scan: # Больше не исключаем 'quick'
-            if "-sV" not in cmd_parts:
+        # Дополнительные опции (не для discovery сканирования)
+        if scan_config.scan_type != ScanType.DISCOVERY:
+            if scan_config.service_version and "-sV" not in cmd_parts:
                 cmd_parts.append("-sV")
-        
-        if scan_config.os_detection and is_port_scan: # Больше не исключаем 'quick'
-            if "-O" not in cmd_parts:
+            if scan_config.os_detection and "-O" not in cmd_parts:
                 cmd_parts.append("-O")
-        
-        if scan_config.script_scan and is_port_scan: # Больше не исключаем 'quick'
-            if "-sC" not in cmd_parts:
+            if scan_config.script_scan and "-sC" not in cmd_parts:
                 cmd_parts.append("-sC")
         
-        # Диапазон портов
+        # Диапазон портов (не для quick и discovery)
         if (scan_config.port_range and 
-            scan_config.scan_type.value not in ["discovery", "quick", "custom"]):
+            scan_config.scan_type not in [ScanType.QUICK, ScanType.DISCOVERY]):
             cmd_parts.append(f"-p {scan_config.port_range}")
-        
-        # Пользовательская команда
-        if (scan_config.scan_type.value == "custom" and 
-            scan_config.custom_command and 
-            scan_config.custom_command.strip()):
-            custom_cmd = scan_config.custom_command.strip()
-            if "-oX" not in custom_cmd:
-                custom_cmd += " -oX -"
-            return custom_cmd
         
         # Цели
         cmd_parts.extend(scan_config.targets)
@@ -424,7 +400,9 @@ class NmapEngine:
         # Вывод в XML
         cmd_parts.append("-oX -")
         
-        return " ".join(cmd_parts)
+        command = " ".join(cmd_parts)
+        self.logger.info(f"Generated nmap command: {command}")
+        return command
     
     def _parse_xml_results(self, xml_file_path: str, scan_config: ScanConfig) -> ScanResult:
         """
