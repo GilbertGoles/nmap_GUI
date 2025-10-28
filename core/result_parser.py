@@ -137,7 +137,7 @@ class NmapResultParser:
             return None
     
     def _parse_ports(self, ports_element: ET.Element) -> List[PortInfo]:
-        """Парсит информацию о портах"""
+        """Парсит информацию о портах - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
         ports = []
         
         for port_element in ports_element.findall('port'):
@@ -152,10 +152,15 @@ class NmapResultParser:
                 service_element = port_element.find('service')
                 script_elements = port_element.findall('script')
                 
+                # ВАЖНОЕ ИСПРАВЛЕНИЕ: Правильно получаем состояние порта
+                state = 'unknown'
+                if state_element is not None:
+                    state = state_element.get('state', 'unknown')
+                
                 port_info = PortInfo(
                     port=int(port_id),
                     protocol=protocol,
-                    state=state_element.get('state', 'unknown') if state_element else 'unknown',
+                    state=state,  # Используем исправленное состояние
                     service=service_element.get('name', 'unknown') if service_element else 'unknown',
                     version=service_element.get('product', '') if service_element else '',
                     reason=state_element.get('reason', '') if state_element else ''
@@ -186,8 +191,11 @@ class NmapResultParser:
                 
                 ports.append(port_info)
                 
+                # ДЕБАГ ЛОГИРОВАНИЕ
+                self.logger.debug(f"Parsed port: {port_id}/{protocol} - State: {state}")
+                
             except Exception as e:
-                self.logger.error(f"Error parsing port: {e}")
+                self.logger.error(f"Error parsing port {port_id}: {e}")
                 continue
         
         return ports
