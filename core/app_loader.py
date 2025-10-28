@@ -1,7 +1,7 @@
 import os
 import importlib
 import logging
-from PyQt6.QtWidgets import QMainWindow, QTabWidget, QVBoxLayout, QWidget, QMessageBox, QLabel
+from PyQt6.QtWidgets import QMainWindow, QTabWidget, QVBoxLayout, QWidget, QMessageBox, QLabel, QApplication
 from core.event_bus import EventBus
 from core.scan_manager import ScanManager
 from core.profile_manager import ProfileManager
@@ -77,16 +77,25 @@ class ApplicationLoader:
         
         for module_name, tab_name in tab_modules:
             try:
+                print(f"🟣 [AppLoader] Loading module: {module_name}")
+                
                 # Динамически импортируем модуль
                 module = importlib.import_module(f'modules.{module_name}')
                 
                 # Создаем вкладку
+                print(f"🟣 [AppLoader] Creating tab instance for: {module_name}")
                 tab_widget_instance = module.create_tab(self.event_bus, self.modules)
+                
                 if tab_widget_instance and isinstance(tab_widget_instance, QWidget):
+                    # Даем время на полную инициализацию
+                    QApplication.processEvents()
+                    
                     tab_widget.addTab(tab_widget_instance, tab_name)
                     self.logger.info(f"Loaded tab module: {module_name}")
+                    print(f"🟣 [AppLoader] Successfully loaded: {module_name}")
                 else:
                     self.logger.warning(f"Module {module_name} returned invalid type")
+                    print(f"🟣 [AppLoader] Module {module_name} returned invalid type")
                     # Создаем заглушку
                     stub = QWidget()
                     layout = QVBoxLayout(stub)
@@ -95,6 +104,7 @@ class ApplicationLoader:
                     
             except Exception as e:
                 self.logger.error(f"Failed to load tab module {module_name}: {e}")
+                print(f"🟣 [AppLoader] ERROR loading {module_name}: {e}")
                 # Создаем заглушку для вкладки
                 stub_widget = QWidget()
                 stub_layout = QVBoxLayout(stub_widget)
