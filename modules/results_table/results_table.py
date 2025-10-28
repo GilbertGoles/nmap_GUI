@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (QVBoxLayout, QGroupBox,
                              QLabel, QTableWidget, QTableWidgetItem,
-                             QHeaderView, QTextEdit)
+                             QHeaderView, QTextEdit, QHBoxLayout, QPushButton)
 from PyQt6.QtCore import pyqtSlot
 from modules.base_module import BaseTabModule
 from core.event_bus import EventBus
@@ -25,14 +25,27 @@ class ResultsTableTab(BaseTabModule):
         title.setStyleSheet("font-size: 16pt; font-weight: bold; margin: 10px;")
         layout.addWidget(title)
         
+        # Панель управления
+        control_layout = QHBoxLayout()
+        self.export_btn = QPushButton("Export Results")
+        self.export_btn.clicked.connect(self._export_results)
+        self.clear_btn = QPushButton("Clear Results")
+        self.clear_btn.clicked.connect(self.clear_results)
+        
+        control_layout.addWidget(self.export_btn)
+        control_layout.addWidget(self.clear_btn)
+        control_layout.addStretch()
+        
+        layout.addLayout(control_layout)
+        
         # Таблица результатов
         table_group = QGroupBox("Scan Results")
         table_layout = QVBoxLayout(table_group)
         
         self.results_table = QTableWidget()
-        self.results_table.setColumnCount(6)
+        self.results_table.setColumnCount(7)  # Увеличили количество колонок
         self.results_table.setHorizontalHeaderLabels([
-            "IP Address", "Hostname", "Status", "OS", "Open Ports", "Services"
+            "IP Address", "Hostname", "Status", "OS", "Open Ports", "Services", "Vulnerabilities"
         ])
         
         # Настройка таблицы
@@ -43,6 +56,7 @@ class ResultsTableTab(BaseTabModule):
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
         
         # Подключаем обработчик выбора строки
         self.results_table.itemSelectionChanged.connect(self._on_row_selected)
@@ -67,6 +81,31 @@ class ResultsTableTab(BaseTabModule):
         
         # Инициализируем результаты
         self.current_results = None
+    
+    def _export_results(self):
+        """Экспортирует результаты в файл"""
+        if not self.current_results:
+            QMessageBox.warning(self, "Warning", "No results to export!")
+            return
+        
+        try:
+            from shared.utils.exporters import ExportManager
+            
+            # Простой экспорт в текстовый формат
+            export_content = ExportManager.export_to_text(self.current_results)
+            
+            from PyQt6.QtWidgets import QFileDialog
+            file_path, _ = QFileDialog.getSaveFileName(
+                self, "Export Results", "scan_results.txt", "Text Files (*.txt)"
+            )
+            
+            if file_path:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(export_content)
+                QMessageBox.information(self, "Success", f"Results exported to {file_path}")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to export results: {e}")
     
     @pyqtSlot(dict)
     def _on_scan_completed(self, data):
@@ -126,15 +165,47 @@ class ResultsTableTab(BaseTabModule):
             
             services_text = ", ".join(services) if services else "None"
             self.results_table.setItem(row, 5, QTableWidgetItem(services_text))
+            
+            # Индикатор уязвимостей
+            vulnerability_count = self._count_vulnerabilities(host)
+            vuln_text = f"{vulnerability_count} found" if vulnerability_count > 0 else "None"
+            vuln_item = QTableWidgetItem(vuln_text)
+            if vulnerability_count > 0:
+                vuln_item.setBackground(QColor(255, 200, 200))  # Красный фон для уязвимостей
+            self.results_table.setItem(row, 6, vuln_item)
         
         # Обновляем статус с общей статистикой
         total_open_ports = sum(len([p for p in h.ports if p.state == "open"]) for h in hosts)
-        self.status_label.setText(f"Displaying {len(hosts)} hosts, {total_open_ports} open ports")
+        total_vulnerabilities = sum(self._count_vulnerabilities(h) for h in hosts)
+        self.status_label.setText(
+            f"Displaying {len(hosts)} hosts, {total_open_ports} open ports, {total_vulnerabilities} vulnerabilities"
+        )
         
         # Показываем детали первого хоста, если есть результаты
         if hosts:
             self.results_table.selectRow(0)  # Автоматически выбираем первую строку
             self._show_host_details(hosts[0])
+    
+    def _count_vulnerabilities(self, host: HostInfo) -> int:
+        """Считает количество уязвимостей для хоста"""
+        count = 0
+        
+        # Проверяем скрипты nmap на наличие индикаторов уязвимостей
+        for script_name, script_output in host.scripts.items():
+            script_lower = script_output.lower()
+            # Простые индикаторы уязвимостей в выводе скриптов
+            if any(keyword in script_lower for keyword in ['vulnerable', 'vulnerability', 'cve', 'exploit', 'risk']):
+                count += 1
+        
+        # Проверяем версии сервисов на известные уязвимости
+        for port in host.ports:
+            if port.version:
+                version_lower = port.version.lower()
+                # Простые проверки уязвимых версий (можно расширить)
+                if any(vuln in version_lower for vuln in ['2.4.49', '2.4.50', 'vsftpd 2.3.4']):
+                    count += 1
+        
+        return count
     
     def _show_host_details(self, host: HostInfo):
         """Показывает детальную информацию о хосте"""
@@ -163,6 +234,12 @@ class ResultsTableTab(BaseTabModule):
                 details += "-" * 20 + "\n"
         else:
             details += "No open ports found\n"
+        
+        # Добавляем информацию об уязвимостях
+        vulnerabilities = self._count_vulnerabilities(host)
+        if vulnerabilities > 0:
+            details += f"\n⚠️  Potential Vulnerabilities Found: {vulnerabilities}\n"
+            details += "Check the scripts output for details.\n"
         
         self.details_text.setPlainText(details)
     
