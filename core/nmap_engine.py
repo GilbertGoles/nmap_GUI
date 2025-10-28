@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 import logging
 
 from core.event_bus import EventBus
-from shared.models.scan_config import ScanConfig, ScanType
+from shared.models.scan_config import ScanConfig, ScanType, ScanIntensity  # ОБНОВЛЕННЫЙ ИМПОРТ
 from shared.models.scan_result import ScanResult
 
 class NmapEngine:
@@ -40,6 +40,7 @@ class NmapEngine:
         """
         try:
             self.logger.info(f"Starting nmap scan: {scan_config.scan_id}")
+            self.logger.info(f"Scan intensity: {scan_config.scan_intensity.value}")
             
             # Генерируем команду nmap
             command = self._build_nmap_command(scan_config)
@@ -52,7 +53,6 @@ class NmapEngine:
             # Запускаем nmap процесс
             self.logger.info(f"Executing: {command}")
             
-            # ИСПРАВЛЕНИЕ: используем правильный подход для чтения вывода
             process = subprocess.Popen(
                 command,
                 shell=True,
@@ -118,14 +118,12 @@ class NmapEngine:
         """
         try:
             self.logger.info(f"Starting comprehensive scan: {scan_config.scan_id}")
+            self.logger.info(f"Scan intensity: {scan_config.scan_intensity.value}")
             
-            # Базовая команда для комплексного сканирования
-            base_cmd = "nmap -sS -sV -O -A --script vuln,safe,default"
+            # Генерируем команду на основе интенсивности
+            base_cmd = self._build_comprehensive_command(scan_config)
             
-            # Добавляем цели и вывод
-            command = f"{base_cmd} {' '.join(scan_config.targets)} -oX -"
-            
-            self.logger.info(f"Comprehensive scan command: {command}")
+            self.logger.info(f"Comprehensive scan command: {base_cmd}")
             
             # Создаем временный файл для XML
             with tempfile.NamedTemporaryFile(mode='w+', suffix='.xml', delete=False, encoding='utf-8') as temp_file:
@@ -133,7 +131,7 @@ class NmapEngine:
             
             # Запускаем процесс
             process = subprocess.Popen(
-                command,
+                base_cmd,
                 shell=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -188,6 +186,31 @@ class NmapEngine:
                 raw_xml=""
             )
     
+    def _build_comprehensive_command(self, scan_config: ScanConfig) -> str:
+        """
+        Строит команду для комплексного сканирования на основе интенсивности
+        """
+        cmd_parts = ["nmap", "-sS", "-sV", "-O", "-A"]
+        
+        # Добавляем скрипты в зависимости от интенсивности
+        if scan_config.scan_intensity == ScanIntensity.SAFE:
+            cmd_parts.append("--script=safe,default")
+        elif scan_config.scan_intensity == ScanIntensity.NORMAL:
+            cmd_parts.append("--script=safe,default,version,discovery")
+        elif scan_config.scan_intensity == ScanIntensity.AGGRESSIVE:
+            cmd_parts.append("--script=safe,default,version,discovery,vuln")
+        elif scan_config.scan_intensity == ScanIntensity.PENETRATION:
+            cmd_parts.append("--script=safe,default,version,discovery,vuln,exploit")
+        
+        # Добавляем цели
+        cmd_parts.extend(scan_config.targets)
+        
+        # Вывод в XML
+        cmd_parts.append("-oX -")
+        
+        command = " ".join(cmd_parts)
+        return command
+
     def _process_nmap_output(self, process: subprocess.Popen, scan_config: ScanConfig, xml_file_path: str):
         """Обрабатывает вывод nmap (stdout и stderr)"""
         try:
@@ -355,7 +378,7 @@ class NmapEngine:
 
     def _build_nmap_command(self, scan_config: ScanConfig) -> str:
         """
-        Строит команду nmap из конфигурации - ИСПРАВЛЕННАЯ ВЕРСИЯ
+        Строит команду nmap из конфигурации - ОБНОВЛЕННАЯ ВЕРСИЯ
         """
         cmd_parts = ["nmap"]
         
@@ -363,7 +386,7 @@ class NmapEngine:
         if scan_config.timing_template:
             cmd_parts.append(f"-{scan_config.timing_template}")
         
-        # Тип сканирования - ИСПРАВЛЕНИЕ ДЛЯ QUICK SCAN
+        # Тип сканирования
         if scan_config.scan_type == ScanType.QUICK:
             cmd_parts.append("-F")  # Быстрое сканирование основных портов
         elif scan_config.scan_type == ScanType.STEALTH:
@@ -386,8 +409,16 @@ class NmapEngine:
                 cmd_parts.append("-sV")
             if scan_config.os_detection and "-O" not in cmd_parts:
                 cmd_parts.append("-O")
-            if scan_config.script_scan and "-sC" not in cmd_parts:
-                cmd_parts.append("-sC")
+            if scan_config.script_scan:
+                # ДОБАВЛЯЕМ СКРИПТЫ В ЗАВИСИМОСТИ ОТ ИНТЕНСИВНОСТИ
+                if scan_config.scan_intensity == ScanIntensity.SAFE:
+                    cmd_parts.append("--script=safe,default")
+                elif scan_config.scan_intensity == ScanIntensity.NORMAL:
+                    cmd_parts.append("--script=safe,default,version,discovery")
+                elif scan_config.scan_intensity == ScanIntensity.AGGRESSIVE:
+                    cmd_parts.append("--script=safe,default,version,discovery,vuln")
+                elif scan_config.scan_intensity == ScanIntensity.PENETRATION:
+                    cmd_parts.append("--script=safe,default,version,discovery,vuln,exploit")
         
         # Диапазон портов (не для quick и discovery)
         if (scan_config.port_range and 
