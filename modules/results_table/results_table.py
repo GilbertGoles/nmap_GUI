@@ -97,28 +97,27 @@ class VulnerabilityDetailsDialog(QDialog):
             self.text_edit.setText("No vulnerabilities found")
             return
         
-        html_content = """
-        <html>
-        <head>
-            <style>
-                body { font-family: Arial, sans-serif; margin: 20px; }
-                .vuln { margin: 10px 0; padding: 10px; border-left: 4px solid #f44336; background: #ffeaea; }
-                .critical { border-color: #d32f2f; background: #ffcdd2; }
-                .high { border-color: #f44336; background: #ffeaea; }
-                .medium { border-color: #ff9800; background: #fff3e0; }
-                .low { border-color: #4caf50; background: #e8f5e8; }
-                .risk { font-weight: bold; padding: 2px 8px; border-radius: 3px; }
-                .risk-critical { background: #d32f2f; color: white; }
-                .risk-high { background: #f44336; color: white; }
-                .risk-medium { background: #ff9800; color: white; }
-                .risk-low { background: #4caf50; color: white; }
-                .cve { background: #e3f2fd; border-left: 4px solid #2196f3; }
-                .cve-id { font-family: monospace; font-weight: bold; color: #1976d2; }
-            </style>
-        </head>
-        <body>
-            <h2>Found Vulnerabilities: {count}</h2>
-        """.format(count=len(vulnerabilities))
+        html_content = """<html>
+<head>
+<style>
+body { font-family: Arial, sans-serif; margin: 20px; }
+.vuln { margin: 10px 0; padding: 10px; border-left: 4px solid #f44336; background: #ffeaea; }
+.critical { border-color: #d32f2f; background: #ffcdd2; }
+.high { border-color: #f44336; background: #ffeaea; }
+.medium { border-color: #ff9800; background: #fff3e0; }
+.low { border-color: #4caf50; background: #e8f5e8; }
+.risk { font-weight: bold; padding: 2px 8px; border-radius: 3px; }
+.risk-critical { background: #d32f2f; color: white; }
+.risk-high { background: #f44336; color: white; }
+.risk-medium { background: #ff9800; color: white; }
+.risk-low { background: #4caf50; color: white; }
+.cve { background: #e3f2fd; border-left: 4px solid #2196f3; }
+.cve-id { font-family: monospace; font-weight: bold; color: #1976d2; }
+</style>
+</head>
+<body>
+<h2>Found Vulnerabilities: {count}</h2>
+""".format(count=len(vulnerabilities))
         
         for i, vuln in enumerate(vulnerabilities, 1):
             risk = vuln.get('risk', 'low').lower()
@@ -130,25 +129,25 @@ class VulnerabilityDetailsDialog(QDialog):
                 vuln_class = 'cve'
             
             html_content += f"""
-            <div class="vuln {vuln_class}">
-                <h3>"""
+<div class="vuln {vuln_class}">
+    <h3>"""
             
             # Добавляем CVE ID если есть
             if vuln.get('type') == 'CVE':
                 html_content += f"""<span class="cve-id">{vuln.get('id', 'Unknown CVE')}</span> - """
             
             html_content += f"""Vulnerability #{i} <span class="risk {risk_class}">{vuln.get('risk', 'UNKNOWN')}</span></h3>
-                <p><strong>Service:</strong> {vuln.get('service', 'Unknown')}</p>
-                <p><strong>Port:</strong> {vuln.get('port', 'Unknown')}</p>
-                <p><strong>Version:</strong> {vuln.get('version', 'Unknown')}</p>"""
+    <p><strong>Service:</strong> {vuln.get('service', 'Unknown')}</p>
+    <p><strong>Port:</strong> {vuln.get('port', 'Unknown')}</p>
+    <p><strong>Version:</strong> {vuln.get('version', 'Unknown')}</p>"""
             
             # Добавляем CVSS score для CVE
             if vuln.get('cvss_score'):
                 html_content += f"""<p><strong>CVSS Score:</strong> {vuln.get('cvss_score')}</p>"""
             
             html_content += f"""
-                <p><strong>Issue:</strong> {vuln.get('issue', 'No details')}</p>
-                <p><strong>Recommendation:</strong> {vuln.get('recommendation', 'No recommendation')}</p>"""
+    <p><strong>Issue:</strong> {vuln.get('issue', 'No details')}</p>
+    <p><strong>Recommendation:</strong> {vuln.get('recommendation', 'No recommendation')}</p>"""
             
             # Добавляем источник для CVE
             if vuln.get('source'):
@@ -157,8 +156,8 @@ class VulnerabilityDetailsDialog(QDialog):
                 html_content += f"""<p><strong>Script:</strong> {vuln.get('script', 'N/A')}</p>"""
             
             html_content += """
-            </div>
-            """
+</div>
+"""
         
         html_content += "</body></html>"
         self.text_edit.setHtml(html_content)
