@@ -80,6 +80,11 @@ class ScanManager:
     def _execute_scan(self, job: ScanJob):
         """Выполняет сканирование через nmap движок"""
         try:
+            # === ИСПРАВЛЕНИЕ: Убедимся, что ScanConfig содержит уникальный ID из ScanJob ===
+            # Чтобы NmapEngine логировал правильный ID вместо "scan_1"
+            job.config.scan_id = job.id 
+            # ===============================================================================
+            
             job.status = ScanStatus.RUNNING
             
             # Выполняем реальное сканирование
@@ -105,7 +110,6 @@ class ScanManager:
                 # Добавляем в историю
                 self.scan_history.append(job)
                 
-                # ⚠️ ИСПРАВЛЕНИЕ: УДАЛЕНА ЗАДЕРЖКА - ОЧИЩАЕМ СРАЗУ
                 # Удаляем из активных сканирований НЕМЕДЛЕННО после отправки сигнала
                 if job.id in self.active_scans:
                     del self.active_scans[job.id]  # <-- Это решает проблему "Stopped scan"
@@ -125,7 +129,7 @@ class ScanManager:
                 'error': str(e)
             })
             
-            # ⚠️ ИСПРАВЛЕНИЕ: В случае ошибки тоже удаляем из активных
+            # В случае ошибки тоже удаляем из активных
             if job.id in self.active_scans:
                 del self.active_scans[job.id]
     
@@ -167,7 +171,7 @@ class ScanManager:
             # Останавливаем сканирование в движке
             self.nmap_engine.stop_scan(scan_id)
             
-            # ⚠️ ИСПРАВЛЕНИЕ: Удаляем из активных сканирований НЕМЕДЛЕННО
+            # Удаляем из активных сканирований НЕМЕДЛЕННО
             del self.active_scans[scan_id]
     
     def get_scan_status(self, scan_id: str) -> ScanStatus:
