@@ -2,6 +2,7 @@ import threading
 import queue
 import uuid
 import time
+import logging
 from typing import Dict, List
 from enum import Enum
 
@@ -43,6 +44,7 @@ class ScanManager:
         self.scan_history: List[ScanJob] = []
         self.is_running = True
         self.nmap_engine = NmapEngine.get_instance(event_bus)
+        self.logger = self._setup_logging()
         
         # Подписываемся на события
         self.event_bus.scan_progress.connect(self._on_scan_progress)
@@ -53,6 +55,11 @@ class ScanManager:
         # Запускаем worker thread
         self.worker_thread = threading.Thread(target=self._process_queue, daemon=True)
         self.worker_thread.start()
+
+    def _setup_logging(self):
+        """Настройка логирования"""
+        logging.basicConfig(level=logging.INFO)
+        return logging.getLogger(__name__)
     
     def submit_scan(self, config: ScanConfig) -> str:
         """Добавляет сканирование в очередь"""
@@ -94,7 +101,8 @@ class ScanManager:
             if job.result:
                 job.result.scan_id = original_scan_id or job.id
                 
-            if job.status == ScanStatus.RUNNING:
+            # Проверяем, что сканирование не было остановлено во время выполнения
+            if job.id in self.active_scans and job.status == ScanStatus.RUNNING:
                 job.status = ScanStatus.COMPLETED
                 job.progress = 100
                 
@@ -131,7 +139,7 @@ class ScanManager:
             
         finally:
             # Удаляем из активных сканирований в любом случае (успех или ошибка)
-            # Но только если сканирование не было остановлено вручную
+            # Но только если сканирование не было остановлено вручную и все еще в активных
             if job.id in self.active_scans and job.status != ScanStatus.STOPPED:
                 del self.active_scans[job.id]
     
@@ -218,7 +226,24 @@ class ScanManager:
     def stop_scan(self, scan_id: str):
         """Останавливает сканирование"""
         if scan_id in self.active_scans:
-            self._on_scan_stopped({'scan_id': scan_id})
+            job = self.active_scans[scan_id]
+            job.status = ScanStatus.STOPPED
+            
+            # Останавливаем в движке ПЕРВЫМ ДЕЛОМ
+            self.nmap_engine.stop_scan(scan_id)
+            
+            # Удаляем из активных НЕМЕДЛЕННО
+            del self.active_scans[scan_id]
+            
+            # Публикуем события
+            self.event_bus.scan_stopped.emit({'scan_id': scan_id})
+            self.event_bus.results_updated.emit({
+                'scan_id': scan_id,
+                'results': None,
+                'status': 'stopped'
+            })
+            
+            self.logger.info(f"Scan {scan_id} stopped by user")
     
     def get_scan_result(self, scan_id: str) -> ScanResult:
         """Возвращает результаты сканирования"""
