@@ -1,10 +1,12 @@
 from PyQt6.QtWidgets import (QVBoxLayout, QGroupBox,
                              QLabel, QTableWidget, QTableWidgetItem,
-                             QHeaderView, QTextEdit, QHBoxLayout, QPushButton)
+                             QHeaderView, QTextEdit, QHBoxLayout, QPushButton, 
+                             QMessageBox)  # Добавляем QMessageBox
 from PyQt6.QtCore import pyqtSlot
+from PyQt6.QtGui import QColor  # ДОБАВЛЯЕМ ЭТОТ ИМПОРТ
 from modules.base_module import BaseTabModule
 from core.event_bus import EventBus
-from shared.models.scan_result import HostInfo  # Добавляем импорт
+from shared.models.scan_result import HostInfo
 
 def create_tab(event_bus: EventBus, dependencies: dict = None):
     return ResultsTableTab(event_bus, dependencies)
@@ -43,7 +45,7 @@ class ResultsTableTab(BaseTabModule):
         table_layout = QVBoxLayout(table_group)
         
         self.results_table = QTableWidget()
-        self.results_table.setColumnCount(7)  # Увеличили количество колонок
+        self.results_table.setColumnCount(7)
         self.results_table.setHorizontalHeaderLabels([
             "IP Address", "Hostname", "Status", "OS", "Open Ports", "Services", "Vulnerabilities"
         ])
@@ -89,10 +91,8 @@ class ResultsTableTab(BaseTabModule):
             return
         
         try:
-            from shared.utils.exporters import ExportManager
-            
             # Простой экспорт в текстовый формат
-            export_content = ExportManager.export_to_text(self.current_results)
+            export_content = self._generate_export_text()
             
             from PyQt6.QtWidgets import QFileDialog
             file_path, _ = QFileDialog.getSaveFileName(
@@ -107,11 +107,38 @@ class ResultsTableTab(BaseTabModule):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to export results: {e}")
     
+    def _generate_export_text(self):
+        """Генерирует текст для экспорта"""
+        if not self.current_results:
+            return "No results available"
+        
+        lines = []
+        lines.append("NMAP SCAN RESULTS")
+        lines.append("=" * 50)
+        
+        for host in self.current_results.hosts:
+            lines.append(f"\nHost: {host.ip}")
+            lines.append(f"Hostname: {host.hostname or 'N/A'}")
+            lines.append(f"Status: {host.state}")
+            lines.append(f"OS: {host.os_family or 'Unknown'} {host.os_details or ''}")
+            
+            open_ports = [p for p in host.ports if p.state == "open"]
+            if open_ports:
+                lines.append("Open Ports:")
+                for port in open_ports:
+                    lines.append(f"  {port.port}/{port.protocol}: {port.service} {port.version or ''}")
+            else:
+                lines.append("No open ports")
+        
+        return '\n'.join(lines)
+    
     @pyqtSlot(dict)
     def _on_scan_completed(self, data):
         """Обрабатывает завершение сканирования"""
         scan_id = data.get('scan_id')
         results = data.get('results')
+        
+        print(f"🔵 [ResultsTable] Scan completed: {scan_id}, has results: {results is not None}")  # ДЕБАГ
         
         if results:
             self.current_results = results
@@ -123,12 +150,16 @@ class ResultsTableTab(BaseTabModule):
         scan_id = data.get('scan_id')
         results = data.get('results')
         
+        print(f"🔵 [ResultsTable] Results updated: {scan_id}, has results: {results is not None}")  # ДЕБАГ
+        
         if results:
             self.current_results = results
             self._display_results(results)
     
     def _display_results(self, results):
         """Отображает результаты в таблице"""
+        print(f"🔵 [ResultsTable] Displaying results: {len(results.hosts) if results and hasattr(results, 'hosts') else 0} hosts")  # ДЕБАГ
+        
         if not results or not hasattr(results, 'hosts'):
             self.status_label.setText("No results to display")
             self.results_table.setRowCount(0)
@@ -183,7 +214,7 @@ class ResultsTableTab(BaseTabModule):
         
         # Показываем детали первого хоста, если есть результаты
         if hosts:
-            self.results_table.selectRow(0)  # Автоматически выбираем первую строку
+            self.results_table.selectRow(0)
             self._show_host_details(hosts[0])
     
     def _count_vulnerabilities(self, host: HostInfo) -> int:
@@ -201,7 +232,7 @@ class ResultsTableTab(BaseTabModule):
         for port in host.ports:
             if port.version:
                 version_lower = port.version.lower()
-                # Простые проверки уязвимых версий (можно расширить)
+                # Простые проверки уязвимых версий
                 if any(vuln in version_lower for vuln in ['2.4.49', '2.4.50', 'vsftpd 2.3.4']):
                     count += 1
         
