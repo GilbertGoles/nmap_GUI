@@ -50,10 +50,16 @@ class NmapEngine:
             with tempfile.NamedTemporaryFile(mode='w+', suffix='.xml', delete=False, encoding='utf-8') as temp_file:
                 xml_file_path = temp_file.name
             
-            # ДОБАВЛЯЕМ ТАЙМАУТ ДЛЯ СЛОЖНЫХ СКАНИРОВАНИЙ
-            timeout = 300  # 5 минут для комплексных сканирований
+            # УВЕЛИЧИВАЕМ ТАЙМАУТ ДЛЯ СКРИПТОВ
+            timeout = 300  # 5 минут по умолчанию
+            
+            # Увеличиваем таймаут при использовании скриптов
+            if scan_config.script_scan:
+                timeout = 600  # 10 минут для сканирования со скриптами
+                self.logger.info(f"Script scan detected, increasing timeout to {timeout} seconds")
+            
             if scan_config.scan_type == ScanType.COMPREHENSIVE:
-                timeout = 600  # 10 минут
+                timeout = 600  # 10 минут для комплексного сканирования
             
             # Запускаем nmap процесс
             self.logger.info(f"Executing: {command}")
@@ -76,7 +82,7 @@ class NmapEngine:
                 'xml_file': xml_file_path
             }
             
-            # Запускаем основной поток для обработки вывода
+            # Запускаем поток для обработки вывода
             output_thread = threading.Thread(
                 target=self._process_nmap_output,
                 args=(process, scan_config, xml_file_path)
@@ -84,12 +90,12 @@ class NmapEngine:
             output_thread.daemon = True
             output_thread.start()
             
-            # Ждем завершения процесса с таймаутом
+            # Ждем завершения процесса с увеличенным таймаутом
             try:
                 return_code = process.wait(timeout=timeout)
                 self.logger.info(f"Nmap process finished with return code: {return_code}")
             except subprocess.TimeoutExpired:
-                self.logger.warning(f"Scan {scan_config.scan_id} timed out, terminating...")
+                self.logger.warning(f"Scan {scan_config.scan_id} timed out after {timeout} seconds, terminating...")
                 self.stop_scan(scan_config.scan_id)
                 return ScanResult(
                     scan_id=scan_config.scan_id,
@@ -100,7 +106,7 @@ class NmapEngine:
                 )
             
             # Даем потоку время завершиться
-            output_thread.join(timeout=5)
+            output_thread.join(timeout=10)
             
             # Читаем XML результаты
             scan_result = self._parse_xml_results(xml_file_path, scan_config)
@@ -242,11 +248,12 @@ class NmapEngine:
         return command
 
     def _process_nmap_output(self, process: subprocess.Popen, scan_config: ScanConfig, xml_file_path: str):
-        """Обрабатывает вывод nmap (stdout и stderr)"""
+        """Обрабатывает вывод nmap (stdout и stderr) - УЛУЧШЕННАЯ ВЕРСИЯ ДЛЯ СКРИПТОВ"""
         try:
             xml_content = []
             in_xml = False
             last_progress = 0
+            script_output_buffer = []  # БУФЕР ДЛЯ ВЫВОДА СКРИПТОВ
             
             # Читаем stdout
             for line in process.stdout:
@@ -256,6 +263,9 @@ class NmapEngine:
                 if line.startswith('<?xml'):
                     in_xml = True
                     self.logger.debug("Found XML start")
+                    # Сохраняем вывод скриптов до начала XML
+                    if script_output_buffer:
+                        self.logger.info(f"Script output before XML: {len(script_output_buffer)} lines")
                 
                 if in_xml:
                     xml_content.append(line)
@@ -263,12 +273,15 @@ class NmapEngine:
                     if '</nmaprun>' in line:
                         break
                 else:
-                    # Логируем не-XML вывод для отладки
-                    if line:
-                        self.logger.debug(f"Nmap stdout: {line}")
+                    # Сохраняем вывод скриптов
+                    script_output_buffer.append(line)
                     
-                    # Парсим прогресс из текстового вывода
-                    progress = self._parse_progress_from_output(line, last_progress)
+                    # Логируем важные события скриптов
+                    if "NSE:" in line or "script" in line.lower():
+                        self.logger.debug(f"Nmap script: {line}")
+                    
+                    # УЛУЧШЕННЫЙ ПАРСИНГ ПРОГРЕССА ДЛЯ СКРИПТОВ
+                    progress = self._parse_script_progress(line, last_progress)
                     if progress is not None and progress > last_progress:
                         last_progress = progress
                         self.event_bus.scan_progress.emit({
@@ -406,9 +419,29 @@ class NmapEngine:
             pass
         return None
 
+    def _parse_script_progress(self, line: str, last_progress: int) -> Optional[int]:
+        """Парсит прогресс для сканирования со скриптами"""
+        try:
+            line_lower = line.lower()
+            
+            if "nse: script scanning" in line_lower:
+                return min(last_progress + 10, 70)
+            elif "nse: loaded" in line_lower and "scripts" in line_lower:
+                return min(last_progress + 5, 75)
+            elif "completed nse at" in line_lower:
+                return 90
+            elif "nse: starting" in line_lower:
+                return min(last_progress + 2, 85)
+            elif "timing:" in line_lower:
+                return min(last_progress + 1, 95)
+                
+        except:
+            pass
+        return None
+
     def _build_nmap_command(self, scan_config: ScanConfig) -> str:
         """
-        Строит команду nmap из конфигурации - ОБНОВЛЕННАЯ ВЕРСИЯ
+        Строит команду nmap из конфигурации - УЛУЧШЕННАЯ ВЕРСИЯ
         """
         cmd_parts = ["nmap"]
         
@@ -440,6 +473,9 @@ class NmapEngine:
             if scan_config.os_detection and "-O" not in cmd_parts:
                 cmd_parts.append("-O")
             if scan_config.script_scan:
+                # ОГРАНИЧИВАЕМ ВРЕМЯ ВЫПОЛНЕНИЯ СКРИПТОВ
+                cmd_parts.append("--script-timeout=2m")  # 2 минуты на скрипт
+                
                 # ДОБАВЛЯЕМ СКРИПТЫ В ЗАВИСИМОСТИ ОТ ИНТЕНСИВНОСТИ
                 if scan_config.scan_intensity == ScanIntensity.SAFE:
                     cmd_parts.append("--script=safe,default")
