@@ -99,6 +99,12 @@ class NmapEngine:
                 self.logger.debug(f"Error removing temp file: {e}")
             
             self.logger.info(f"Scan completed: {scan_config.scan_id}")
+            
+            # ⚠️ ИСПРАВЛЕНИЕ: УДАЛЕН ЛИШНИЙ СИГНАЛ
+            # ScanManager уже отправляет сигнал scan_completed, 
+            # поэтому здесь это приводит к дублированию
+            # self.event_bus.scan_completed.emit(scan_result) 
+            
             return scan_result
             
         except Exception as e:
@@ -174,6 +180,12 @@ class NmapEngine:
                 pass
             
             self.logger.info(f"Comprehensive scan completed: {scan_config.scan_id}")
+            
+            # ⚠️ ИСПРАВЛЕНИЕ: УДАЛЕН ЛИШНИЙ СИГНАЛ
+            # ScanManager уже отправляет сигнал scan_completed,
+            # поэтому здесь это приводит к дублированию
+            # self.event_bus.scan_completed.emit(scan_result)
+            
             return scan_result
             
         except Exception as e:
