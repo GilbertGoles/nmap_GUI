@@ -124,33 +124,40 @@ class ScanLauncherTab(QWidget):
         
         # Обновляем видимость опций при изменении типа сканирования
         self.scan_type_combo.currentTextChanged.connect(self._update_ui_for_scan_type)
+        
+        # Инициализируем UI для текущего типа сканирования
+        self._update_ui_for_scan_type(self.scan_type_combo.currentText())
     
     def _update_ui_for_scan_type(self, scan_type):
         """Обновляет UI в зависимости от типа сканирования"""
-        if scan_type == "Quick":
-            self.port_range_input.setEnabled(False)
-            self.service_version_check.setEnabled(False)
-            self.os_detection_check.setEnabled(False)
-            self.script_scan_check.setEnabled(False)
-            self.custom_command_input.setEnabled(False)
-        elif scan_type == "Discovery":
-            self.port_range_input.setEnabled(False)
-            self.service_version_check.setEnabled(False)
-            self.os_detection_check.setEnabled(False)
-            self.script_scan_check.setEnabled(False)
-            self.custom_command_input.setEnabled(False)
-        elif scan_type == "Custom":
-            self.port_range_input.setEnabled(True)
-            self.service_version_check.setEnabled(True)
-            self.os_detection_check.setEnabled(True)
-            self.script_scan_check.setEnabled(True)
-            self.custom_command_input.setEnabled(True)
+        
+        # 1. Сброс состояния для всех, кроме 'Custom'
+        is_custom = (scan_type == "Custom")
+        is_quick_or_discovery = (scan_type in ["Quick", "Discovery"])
+        
+        checks = [self.service_version_check, self.os_detection_check, self.script_scan_check]
+
+        # Устанавливаем доступность
+        self.port_range_input.setEnabled(not is_quick_or_discovery)
+        self.custom_command_input.setEnabled(is_custom)
+        
+        for check in checks:
+            check.setEnabled(is_custom or (scan_type not in ["Quick", "Discovery", "Comprehensive"]))
+
+        # 2. Устанавливаем checked-состояние в зависимости от типа
+        if scan_type == "Comprehensive":
+            # Для Comprehensive включаем Service Version, OS Detection и Script Scan
+            for check in checks:
+                check.setChecked(True)
+                check.setEnabled(False) # Делаем неактивным, чтобы пользователь не убрал
+        elif is_quick_or_discovery:
+            # Для Quick и Discovery отключаем все продвинутые опции
+            for check in checks:
+                check.setChecked(False)
+                check.setEnabled(False)
         else:
-            self.port_range_input.setEnabled(True)
-            self.service_version_check.setEnabled(True)
-            self.os_detection_check.setEnabled(True)
-            self.script_scan_check.setEnabled(True)
-            self.custom_command_input.setEnabled(False)
+            # Для Custom и Stealth (по умолчанию) даем пользователю контроль
+            pass
     
     def _start_scan(self):
         """Запускает сканирование"""
@@ -242,31 +249,64 @@ class ScanLauncherTab(QWidget):
         scan_id = data.get('scan_id')
         results = data.get('results')
         
+        # Теперь мы проверяем статус в объекте results, который мы получаем из ScanManager.
+        # Если results=None, то это была ошибка или остановка до получения результата.
+        
         if scan_id == self.current_scan_id:
+            # Проверяем, что результаты существуют и статус "completed" (или другой успешный статус)
             if results and results.status == "completed":
                 self.log_output.append(f"✅ Scan {scan_id} completed successfully!")
                 self.log_output.append(f"📊 Found {len(results.hosts)} host(s)")
                 
-                # ИСПРАВЛЕНИЕ: используем правильные атрибуты HostInfo (ip вместо ip_address)
                 for host in results.hosts:
-                    open_ports = len([port for port in host.ports if port.state == 'open'])
+                    open_ports = [port for port in host.ports if port.state == 'open']
                     hostname = host.hostname if host.hostname else "N/A"
-                    self.log_output.append(f"   • {host.ip} ({hostname}): {open_ports} open ports")
                     
-                    # Дополнительная информация об открытых портах
-                    if open_ports > 0:
-                        open_port_list = [f"{port.port}/{port.protocol}" for port in host.ports if port.state == 'open']
-                        self.log_output.append(f"     Open ports: {', '.join(open_port_list)}")
+                    self.log_output.append(f"  • Host: {host.ip} ({hostname}) - State: {host.state}")
+
+                    # --- НОВЫЙ ВЫВОД ДЛЯ СЕРВИСОВ И ОС ---
                     
-                    # Информация о состоянии хоста
-                    self.log_output.append(f"     Host state: {host.state}")
+                    # 1. ОС (OS)
+                    if hasattr(host, 'os_family') and host.os_family and host.os_family != "unknown":
+                        self.log_output.append(f"    OS: {host.os_family}")
+                        if hasattr(host, 'os_details') and host.os_details:
+                            self.log_output.append(f"    OS Details: {host.os_details}")
+                        
+                    # 2. Открытые порты и Сервисы (Service Version)
+                    if open_ports:
+                        self.log_output.append(f"    {len(open_ports)} Open Port(s):")
+                        for port in open_ports:
+                            # Вывод версии сервиса
+                            service_info = f"{port.version}" if port.version else "N/A"
+                            service_name = f"{port.service}" if port.service else "unknown"
+                            
+                            self.log_output.append(
+                                f"      - {port.port}/{port.protocol} | Service: {service_name} | Version: {service_info}"
+                            )
+                    
+                    # 3. Скрипты и дополнительная информация
+                    if hasattr(host, 'scripts') and host.scripts:
+                        self.log_output.append(f"    📝 Scripts found: {len(host.scripts)}")
+                        for script_id, script_output in host.scripts.items():
+                            # Показываем только первые 100 символов вывода скрипта
+                            short_output = script_output[:100] + "..." if len(script_output) > 100 else script_output
+                            self.log_output.append(f"      - {script_id}: {short_output}")
+                    
+                    # 4. Разделитель между хостами
+                    self.log_output.append("")
+                    # -------------------------------------
+                         
             else:
-                self.log_output.append(f"❌ Scan {scan_id} failed or was stopped")
-                if results:
-                    self.log_output.append(f"     Status: {results.status}")
-            
+                # Этот блок срабатывает, если статус не "completed" (т.е. stopped, error и т.д.)
+                self.log_output.append(f"❌ Scan {scan_id} failed or was terminated.")
+                if results and results.status:
+                    self.log_output.append(f"    Final Status: {results.status}")
+                elif results is None:
+                    # Если results == None, значит, сканирование было остановлено _on_scan_stopped
+                    pass 
+         
             self.log_output.append("")  # Пустая строка для разделения
-            self._reset_ui()
+            self._reset_ui() # <--- Сброс UI-кнопок
 
 
 def create_tab(event_bus: EventBus, core_modules) -> QWidget:
