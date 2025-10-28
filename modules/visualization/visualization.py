@@ -323,7 +323,7 @@ class VisualizationTab(BaseTabModule):
     def __init__(self, event_bus: EventBus, dependencies: dict = None):
         super().__init__(event_bus, dependencies)
         self.current_results = None
-        self.graph_view = None
+        self.graph_view = None  # Инициализируем как None
         
     def _setup_event_handlers(self):
         """Настройка обработчиков событий"""
@@ -391,7 +391,7 @@ class VisualizationTab(BaseTabModule):
         group = QGroupBox("Network Graph")
         layout = QVBoxLayout(group)
         
-        # ИНИЦИАЛИЗИРУЕМ ПРАВИЛЬНО
+        # ПРАВИЛЬНАЯ ИНИЦИАЛИЗАЦИЯ GraphView
         self.graph_view = GraphView()
         layout.addWidget(self.graph_view)
         
@@ -511,6 +511,7 @@ class VisualizationTab(BaseTabModule):
         if not hasattr(self, 'graph_view') or self.graph_view is None:
             print("❌ [Visualization] Graph view not initialized - recreating")
             # Пересоздаем если нужно
+            self.graph_view = GraphView()
             return
         
         self.graph_view.clear_graph()
