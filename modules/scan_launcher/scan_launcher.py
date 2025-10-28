@@ -246,7 +246,7 @@ class ScanLauncherTab(QWidget):
     
     @pyqtSlot(dict)
     def _on_scan_completed(self, data):
-        """Обрабатывает завершение сканирования"""
+        """Обрабатывает завершение сканирования - С УЛУЧШЕННОЙ ОТЛАДКОЙ"""
         scan_id = data.get('scan_id')
         results = data.get('results')
         
@@ -255,50 +255,48 @@ class ScanLauncherTab(QWidget):
                 self.log_output.append(f"✅ Scan {scan_id} completed successfully!")
                 self.log_output.append(f"📊 Found {len(results.hosts)} host(s)")
                 
+                if not results.hosts:
+                    self.log_output.append("❌ No hosts found or all hosts are down")
+                    self.log_output.append("💡 Debug info: Check if targets are reachable")
+                
                 for host in results.hosts:
                     open_ports = [port for port in host.ports if port.state == 'open']
                     hostname = host.hostname if host.hostname else "N/A"
                     
                     self.log_output.append(f"  • Host: {host.ip} ({hostname}) - State: {host.state}")
 
-                    # --- ВЫВОД ОС ---
-                    # Используем правильные атрибуты из модели данных
-                    if hasattr(host, 'os_family') and host.os_family and host.os_family != "unknown":
+                    # Вывод ОС
+                    if host.os_family and host.os_family.lower() != "unknown":
                         self.log_output.append(f"    OS: {host.os_family}")
-                    elif hasattr(host, 'os') and host.os and host.os != "unknown":
-                        self.log_output.append(f"    OS: {host.os}")
-                        
-                    # --- ВЫВОД ПОРТОВ И СЕРВИСОВ ---
+                    else:
+                        self.log_output.append(f"    OS: Could not determine")
+                    
+                    # Вывод портов
                     if open_ports:
                         self.log_output.append(f"    {len(open_ports)} Open Port(s):")
                         for port in open_ports:
-                            # Используем правильные атрибуты из модели PortInfo
-                            service_info = f"{port.version}" if hasattr(port, 'version') and port.version else "N/A"
-                            service_name = f"{port.service}" if hasattr(port, 'service') and port.service else "unknown"
-                            
+                            service_info = f"{port.version}" if port.version else "N/A"
                             self.log_output.append(
-                                f"      - {port.port}/{port.protocol} | Service: {service_name} | Version: {service_info}"
+                                f"      - {port.port}/{port.protocol} | Service: {port.service} | Version: {service_info}"
                             )
+                    else:
+                        self.log_output.append(f"    No open ports found")
                     
-                    # --- ВЫВОД СКРИПТОВ ---
-                    if hasattr(host, 'scripts') and host.scripts:
+                    # Вывод скриптов
+                    if host.scripts:
                         self.log_output.append(f"    📝 Scripts found: {len(host.scripts)}")
                         for script_id, script_output in host.scripts.items():
                             short_output = script_output[:100] + "..." if len(script_output) > 100 else script_output
                             self.log_output.append(f"      - {script_id}: {short_output}")
                     
-                    # Разделитель между хостами
-                    self.log_output.append("")
+                    self.log_output.append("")  # Разделитель между хостами
                     
             else:
-                # Этот блок срабатывает, если статус не "completed" (т.е. stopped, error и т.д.)
-                self.log_output.append(f"❌ Scan {scan_id} failed or was terminated.")
-                if results and results.status:
-                    self.log_output.append(f"    Final Status: {results.status}")
-                elif results is None:
-                    # Если results == None, значит, сканирование было остановлено _on_scan_stopped
-                    pass 
-         
+                error_msg = "Unknown error"
+                if results:
+                    error_msg = results.status
+                self.log_output.append(f"❌ Scan {scan_id} failed: {error_msg}")
+                
             self.log_output.append("")  # Пустая строка для разделения
             self._reset_ui()
 
